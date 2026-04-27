@@ -1,6 +1,6 @@
 # mkPyEdek
 
-**mkPyEdek** to darmowe narzędzie stworzone przez Krzysztofa Markowskiego, służące jako narzędzie dla początkujących programistów języka Python. Interfejs jest ograniczony do minimum, tak aby nie oszałamiać ilością narzędzi.
+**mkPyEdek** to darmowe edytor języka Python, stworzony przez Krzysztofa Markowskiego, służący jako narzędzie dla początkujących programistów, uczących się tego języka w szkole lub na kursach. Interfejs jest ograniczony do minimum, tak aby nie oszałamiać ilością narzędzi.
 
 ---
 
