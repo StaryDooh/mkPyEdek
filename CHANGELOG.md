@@ -2,6 +2,21 @@
 
 ---
 
+## [1.0.3.0]
+
+### Bezpieczeństwo i stabilność
+* **Wyeliminowano Command Injection (Windows/MacOS):** Czyste uruchamianie plików `.py` bez korzystania z flagi `shell=True` (od teraz edytor opiera się o specjalny skrypt *runnera* w samym Pythonie, co dodatkowo rozwiązuje problem okna, które znikało zbyt szybko po błędach wykonania).
+* **Bezpieczny odczyt/zapis środowiska:** Zmieniono funkcję zapisu konfiguracji – edytor zapamiętuje zwalidowaną ścieżkę do interpretera pomiędzy uruchomieniami. Dodano weryfikację uprawnień wykonywania plików (`os.X_OK`).
+* **Zarządzanie wyjątkiem "Zapisz jako...":** Bezpieczniejsza obsługa zapisu nowo nazwanego pliku. Aplikacja robi tzw. *rollback* nazwy, jeśli użytkownik lub system anulują I/O.
+* **Architektura Wątków i optymalizacja UI:**
+  * Weryfikacja składni przed każdym uruchomieniem odbywa się od teraz całkowicie w tle (`QThread`), zapobiegając zamrażaniu interfejsu (GUI) przy dużych plikach.
+  * Autouzupełnianie Jedi jest uodpornione na zjawisko wyścigów (*race conditions*) za pomocą systemowych blokad (`threading.Lock`).
+  * Wszystkie przechwytywane wyjątki posiadają teraz system monitorowania błędów przy użyciu wbudowanego w Pythona modułu `logging`, ułatwiając potencjalne debugowanie.
+* **Inteligentne pary nawiasów:** Poprawiono logikę autouzupełniania znaków cytowania i nawiasów (edycja uwzględnia omijanie podwójnych cudzysłowów podczas zamknięcia oraz sprytne zamykanie zaznaczonego tekstu parami znaków).
+* **Usunięto zbędne biblioteki:** Usunięto nieużywany import klasy `QMenu`, optymalizując strukturę kodu.
+
+---
+
 ## [1.0.2.0]
 
 ### Dodano
