@@ -2,6 +2,68 @@
 
 ---
 
+## [1.0.4.1]
+
+### Poprawki wizualne i UX interfejsu (UI Contrast Bug)
+* **Zsynchronizowanie paska menu z motywem edytora:** Zlikwidowano błąd braku kontrastu menu bar na ciemnych i alternatywnych motywach. Porzucono dziedziczenie domyślnego przezroczystego tła na rzecz jawnego mapowania kolorów RGB dla każdego motywu (w metodzie `apply_ui_theme`). Od teraz paski menu, podmenu, przyciski oraz okna dialogowe (np. wyszukiwania lub błędów) idealnie dopasowują się barwą tła oraz czcionki do aktywnej kompozycji edytora (np. Dracula, Solarized Light, Monokai), gwarantując pełną czytelność interfejsu.
+
+---
+
+## [1.0.4.0]
+
+### Optymalizacja UX i Wytrzymałość na Środowiska Lokalne
+* **Throttling podsystemu IntelliSense:** Zaimplementowano programowy bezpiecznik czasu reakcji (350 ms) oparty na zegarze monotonicznym dla funkcji `request_jedi_completions`. Zapobiega to lawinowemu odpytywaniu parsera Jedi podczas szybkiego pisania kodu i całkowicie likwiduje zamrażanie wątku głównego (GUI) na dużych plikach lub obszernych importach bibliotek zewnętrznych (np. Numpy, Pandas).
+* **Inteligentne cofanie autopar nawiasów (Backspace):** Zmodyfikowano natywną pętlę zdarzeń klawiatury `keyPressEvent`. Jeżeli kursor znajduje się bezpośrednio pomiędzy automatycznie wygenerowaną parą znaków otwierających i domykających (np. `()`, `[]`, `""`), naciśnięcie klawisza Backspace usuwa oba znaki jednocześnie, zapobiegając powstawaniu osieroconych struktur składniowych.
+* **Wielopoziomowy algorytm fallbacku kodowania plików:** Rozszerzono odporność modułu odczytu plików tekstowych na błędy typu `UnicodeDecodeError`. W przypadku napotkania plików o niespójnym standardzie kodowania, system podejmuje kaskadowe próby dekodowania bufora przy użyciu zestawów znaków UTF-8, CP1250 (polskie kodowanie ANSI systemu Windows) oraz Latin-2. Jeśli wszystkie metody zawiodą, plik ładowany jest w trybie bezpiecznym z zamianą uszkodzonych bajtów na znaczniki zastępcze i czytelnym monitem ostrzegawczym.
+
+---
+
+## [1.0.3.5]
+
+### Stabilność i Architektura Edytora (Edge Cases)
+* **Zabezpieczenie flagi cyklu życia procesu:** Kod uruchomieniowy (`_on_syntax_check_done`) korzysta teraz z idiomatycznego bloku `try...finally`. Zapewnia to bezwarunkowe zwolnienie flagi bezpiecznika uruchamiania (`_code_running`), nawet w przypadku wystąpienia nieprzewidzianego błędu rzucanego podczas asynchronicznej kompilacji lub tworzenia środowiska testowego (np. brak powłoki `x-terminal-emulator` na niektórych dystrybucjach Linuxa).
+* **Zachowanie historii "Cofnij" po zamianie tekstu:** Zamiana wielokrotna oparta o natywne modyfikacje stringa została udoskonalona, by nie niszczyć stosu poleceń `Undo/Redo` w Scintilli. Zastosowano metodę odświeżania bufora poprzez `replaceSelectedText()` na uprzednio zaznaczonej całości. Dzięki temu wszystkie zmiany masowe poprawnie agregują się w pojedynczą operację pod skrótem `Ctrl+Z`, zachowując poprzednią historię modyfikacji ucznia.
+
+---
+
+## [1.0.3.4]
+
+### Zmiany w logice działania aplikacji (UX / Bezpieczeństwo danych)
+* **Zabezpieczenie przed nadpisaniem sprawnego kodu:** Zmieniono sekwencję wykonywania polecenia "Uruchom kod" (F5). Aplikacja nie dokonuje już automatycznego zapisu pliku na dysk przed wykonaniem testu składni. Analiza AST (`SyntaxCheckThread`) jest teraz wykonywana bezpośrednio na tekście z pamięci podręcznej edytora (RAM). Zapis na dysku twardym następuje dopiero w momencie, gdy kod pomyślnie przejdzie weryfikację. Zapobiega to bezpowrotnemu uszkodzeniu działających plików źródłowych uczniów w przypadku omyłkowego wprowadzenia błędów składniowych.
+
+### Naprawione błędy (Krytyczna stabilizacja)
+* **Usunięcie nieskończonej pętli zamrażającej GUI w `replace_text`:** Przepisano mechanizm masowej zamiany tekstu ("Zamień wszystko"). Dotychczasowa pętla oparta na natywnych metodach wyszukiwania Scintilli powodowała nieskończone zapętlenie i całkowite zawieszenie edytora, gdy tekst zastępujący zawierał tekst poszukiwany (np. zamiana "i" na "if"). Nowe rozwiązanie operuje bezpośrednio w pamięci Pythona, eliminując problem zawieszania, przyspieszając operację i dając możliwość cofnięcia całej operacji masowej za pomocą jednego wywołania akcji Undo (Ctrl+Z).
+* **Eliminacja wyścigu wątków (Race Condition / Double Launch):** Wprowadzono wewnętrzną flagę stanu `self._code_running`. Zapobiega to nakładaniu się żądań uruchomienia kodu w przypadku skrajnie szybkiego, wielokrotnego wciskania klawisza F5 w czasie, gdy asynchroniczny wątek sprawdzania składni nie zakończył jeszcze operacji wyrejestrowania poprzez makro `deleteLater`.
+* **Korekta generatora kodu:** Naprawiono drobną literówkę składniową w definicji kolorów motywu jasnego (`Jasny`) w linii 108 (`Q000080 =`), która powodowała wystąpienie błędu `SyntaxError` przy próbie uruchomienia aplikacji.
+
+---
+
+## [1.0.3.3]
+
+### Zmiany w logice działania aplikacji (UX / Bezpieczeństwo danych)
+* **Zabezpieczenie przed nadpisaniem sprawnego kodu:** Zmieniono sekwencję wykonywania polecenia "Uruchom kod" (F5). Aplikacja nie dokonuje już automatycznego zapisu pliku na dysk przed wykonaniem testu składni. Analiza AST (`SyntaxCheckThread`) jest teraz wykonywana bezpośrednio na tekście z pamięci podręcznej edytora (RAM). Zapis na dysku twardym następuje dopiero w momencie, gdy kod pomyślnie przejdzie weryfikację. Zapobiega to bezpowrotnemu uszkodzeniu działających plików źródłowych uczniów w przypadku omyłkowego wprowadzenia błędów składniowych.
+
+### Naprawione błędy (Hotfix w locie)
+* **Korekta generatora kodu:** Naprawiono drobną literówkę składniową w definicji kolorów motywu jasnego (`Jasny`) w linii 108 (`Q000080 =`), która powodowała wystąpienie błędu `SyntaxError` przy próbie uruchomienia aplikacji.
+
+---
+
+## [1.0.3.2]
+
+### Naprawione błędy
+* **Usunięto błąd krytyczny składni (SyntaxError):** Usunięto nielegalny token `$` w linii 131 (`if next_char == key_text:`), który uniemożliwiał uruchomienie edytora.
+* **Optymalizacja zarządzania pamięcią QThread:** Przeprojektowano model usuwania wątku sprawdzania składni. Przeniesiono odpowiedzialność za wywołanie `deleteLater()` bezpośrednio do połączenia sygnałowego Qt w metodzie `run_code()`. W slocie `_on_syntax_check_done` zachowano bezpieczne, natychmiastowe zerowanie referencji, całkowicie eliminując mikro-ryzyko wyścigów podczas zwalniania pamięci sterty.
+* **Zabezpieczenie przed zamknięciem aplikacji:** Dodano pełną implementację zdarzenia `closeEvent()`. Jeśli użytkownik spróbuje zamknąć aplikację podczas trwania walidacji kodu w tle, edytor bezpiecznie odpina sygnały, przerywa działanie wątku tła (`quit`) i czeka na jego zakończenie (`wait`), zapobiegając awariom naruszenia ochrony pamięci (Segmentation Fault).
+
+---
+
+## [1.0.3.1]
+
+### Naprawione błędy krytyczne
+* **Usunięto wyciek pamięci w walidatorze składni:** Naprawiono błąd akumulowania martwych obiektów `SyntaxCheckThread` przy wielokrotnym uruchamianiu kodu klawiszem F5. Wprowadzono bezpieczne odłączanie sygnałów (`disconnect`), niszczenie obiektów przez pętlę Qt (`deleteLater`) oraz bezwzględne zerowanie referencji do wątku po zakończeniu emisji sygnału. Uniemożliwia to powstanie sytuacji wyścigu i podwójnego startu interpretera.
+
+---
+
 ## [1.0.3.0]
 
 ### Bezpieczeństwo i stabilność
