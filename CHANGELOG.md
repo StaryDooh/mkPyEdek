@@ -2,6 +2,35 @@
 
 ---
 
+## [1.0.5.0]
+
+### Optymalizacje asynchroniczności i czytelności
+* **Kolejkowanie zapytań silnika Jedi (Debouncing/Throttling):** Przeprojektowano system autouzupełniania w locie. Od teraz, podczas intensywnego pisania, gdy wątek tła przetwarza zapytanie, nowe żądania są oznaczane jako oczekujące (`_pending_completion`). Po zakończeniu pracy poprzedniego wątku aplikacja weryfikuje ruch kursora: jeśli użytkownik wciąż pisze, stary, nieaktualny wynik jest natychmiastowo porzucany na rzecz nowego, świeżego zapytania dla aktualnej pozycji. Zapobiega to pojawianiu się spóźnionych podpowiedzi dla minionego tekstu.
+* **Refaktoryzacja komentarzy technicznych w architekturze procesów:** Rozszerzono dokumentację metody `_on_syntax_check_done` w celu jednoznacznego opisania intencji instrukcji `return` wewnątrz konstrukcji `try/finally`. Zmiana ta gwarantuje czytelność kodu dla mechaniki zwalniania blokady uruchomieniowej `_code_running`.
+
+---
+
+## [1.0.4.3]
+
+### Stabilność i Architektura Edytora (Edge Cases)
+* **Wstrzymanie wykonania przy zaniechaniu konwersji kodowania:** Zabezpieczono łańcuch uruchomieniowy procesu (F5) przed wykonaniem niezapisanego kodu. W sytuacji, gdy edytor ostrzega przed konwersją przestarzałego kodowania na UTF-8 (np. starych plików CP1250), a użytkownik zaniecha operacji, kod nie zostanie uruchomiony, zapobiegając rozbieżnościom w tym, co jest na dysku, a tym, co wykonuje maszyna w pamięci RAM.
+* **Optymalizacja płynności interfejsu przy zmianie kompozycji graficznej:** Zmodyfikowano metodę aktualizacji motywu graficznego `apply_theme`. Silnik tokenizacji w locie `QsciLexerPython` jest od teraz przydzielany obiektowi w sposób trwały. Zmiana kompozycji powoduje wyłącznie "przemalowanie" istniejących reguł dla aktualnego bufora tekstowego. Zapobiega to kosztownemu niszczeniu i kreowaniu obróbki syntaktycznej od zera, co całkowicie likwiduje irytujące "mruganie" okna przy dużych plikach.
+* **Ochrona struktur typu potrójne cudzysłowy:** Złagodzono mechanizm inteligentnego kasowania autopar. Algorytm wciśnięcia klawisza `Backspace` nie usuwa podwójnych cudzysłowów, jeśli przylega on i znajduje się bezpośrednio w sekwencji potrójnej inicjalizacji (np. `"""` / `'''`). Gwarantuje to spójność przy wprowadzaniu wieloliniowych komentarzy dokumentujących funkcje (docstrings).
+
+---
+
+## [1.0.4.2]
+
+### Optymalizacja wydajności
+* **Odblokowanie wątku głównego (GUI) podczas autouzupełniania:** Silnik podpowiedzi Jedi został w pełni zrównoleglony przy użyciu architektury `QThread` (`JediCompletionThread`). Od teraz interfejs edytora działa perfekcyjnie płynnie i bez zacięć, nawet podczas analizy potężnych bibliotek zewnętrznych takich jak Numpy. Operacje wyszukiwania odbywają się nieodczuwalnie w tle.
+
+### Zapobieganie utracie danych i UX
+* **Ostrzeżenie przed naruszeniem kodowania znaków:** Edytor zyskał bezpiecznik zapobiegający bezwarunkowemu nadpisywaniu plików typu Windows-1250 / ANSI do formatu UTF-8. Aplikacja zapamiętuje źródłowe kodowanie podczas operacji otwierania, a przy próbie pierwszego zapisu wyświetla monit, czy użytkownik na pewno chce dokonać wymuszonej konwersji standardu.
+* **Rozszerzona obsługa eksportu przez Gmail:** Zabezpieczono proces wklejania dużych objętościowo partii kodu (powyżej 1500 znaków). W przypadku przekroczenia limitu zapytania systemowego, aplikacja wyświetli interaktywne zapytanie o zgodę, automatycznie przerzuci tekst do schowka, po czym uruchomi oprogramowanie pocztowe bez blokowania błędem protokołu URI.
+* **Naprawiono flagowanie skrótów Windows Explorer:** Zaktualizowano ustrukturyzowany wzorzec wywołania (`f"/select,{file_path}"`) stosowany do podświetlenia plików z poziomu menu "Classroom", co przywraca naturalne działanie eksploratora plików z zaznaczonym elementem (zamiast dotychczasowego otwierania samego katalogu docelowego).
+
+---
+
 ## [1.0.4.1]
 
 ### Poprawki wizualne i UX interfejsu (UI Contrast Bug)
