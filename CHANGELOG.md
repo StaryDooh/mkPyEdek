@@ -2,6 +2,78 @@
 
 ---
 
+## [1.0.5.8]
+
+### Poprawki
+* **Ochrona przed awarią aplikacji:** Dodano globalną obsługę nieprzechwyconych wyjątków (`sys.excepthook`). Błędy ze slotów Qt i zdarzeń edytora wyświetlają teraz powiadomienie użytkownikowi i są logowane, zapobiegając nagłemu wyłączeniu programu i utracie niezapisanego kodu.
+* **Bezpieczniejsza weryfikacja składni:** Rozszerzono przechwytywanie wyjątków w `SyntaxCheckThread` o klasę `Exception` (zamiast samego `SyntaxError`), co chroni przed awariami przy błędach alokacji lub niepoprawnych znakach bajtowych.
+* **Trwały zapis logów:** Konfiguracja modułu `logging` zapisuje od teraz logi zdarzeń i błędów do pliku `~/.mkPyEdek/app.log` w kodowaniu UTF-8.
+
+---
+
+## [1.0.5.7]
+
+### Poprawki
+* **Zarządzanie wątkami w tle (QThread):** Zmieniono nazwy własnych sygnałów (`result_ready`), aby uniknąć przysłaniania wbudowanego sygnału `QThread.finished`. Operacja `deleteLater` jest teraz wywoływana bezpiecznie po zakończeniu pracy wątku.
+* **Wielowątkowość i wyścigi:** Dodano weryfikację nadawcy (`self.sender()`) w autouzupełnianiu Jedi, zapobiegając utracie referencji do aktywnych wątków przy szybkim pisaniu.
+* **Poprawa cyklu życia aplikacji:** Zmieniono kolejność w `closeEvent` – anulowanie zamknięcia okna po zapytaniu o zapis nie przerywa już działania mechanizmów weryfikacji składni (F5).
+
+---
+
+## [1.0.5.6]
+
+### Poprawki
+* **Naprawiono nadpisywanie plików bez pytania:** Opcja "Zapisz jako" poprawnie weryfikuje teraz istnienie pliku docelowego, nawet jeśli użytkownik nie wpisał ręcznie rozszerzenia `.py`.
+* **Rozszerzenia plików:** Usunięto błąd powodujący tworzenie plików z podwójnymi rozszerzeniami (np. `plik.txt.py` lub warianty wielkości liter `skrypt.PY.py`). Zarządzanie sufiksem przejęło natywne okno dialogowe.
+
+---
+
+## [1.0.5.5]
+
+### Poprawki
+* **Ochrona przed utratą danych:** Otwarcie pliku z menu "Otwórz ostatnie" prawidłowo wywołuje teraz okno dialogowe z pytaniem o zapisanie aktualnych zmian. Wcześniej aplikacja po cichu nadpisywała edytor, bezpowrotnie usuwając niezapisany kod użytkownika.
+
+---
+
+## [1.0.5.4]
+
+### Poprawki dla platformy macOS
+* **Naprawiono błąd składni AppleScript podczas uruchamiania kodu:** Wycofano poleganie wyłącznie na systemowym `shlex.quote()` w budowaniu polecenia wywoływanego przez interpreter `osascript`. Teraz edytor prawidłowo ujmuje ścieżkę do skryptu w wymagane przez AppleScript cudzysłowy i zabezpiecza tzw. znaki ucieczki wewnątrz łańcucha (np. odwrócone ukośniki oraz wewnętrzne cudzysłowy), uniemożliwiając awarie uruchomieniowe spowodowane „gołymi” ścieżkami systemów uniksowych.
+* **Automatyczne czyszczenie plików:** Dodano dyrektywę `rm -- "$0"` na końcu generowanego dla terminala systemowego pliku rozruchowego `.sh`. Dzięki temu nowa karta Terminala automatycznie usunie tymczasowy plik wykonywalny ze ścieżki (np. `/var/folders/`) bezpośrednio po zamknięciu sesji, chroniąc dysk przed zapychaniem resztkami po wciśnięciu *Uruchom*.
+
+---
+
+## [1.0.5.3]
+
+### Poprawki błędów
+* **Detekcja interpretera Python:** Zmieniono sposób inicjalizacji głównej komendy uruchomieniowej dla skryptów. Aplikacja dynamicznie i w konkretnej kolejności wyszukuje poprawną ścieżkę interpretera w zmiennych środowiskowych systemów poprzez `shutil.which("python3") or shutil.which("python") or "python"`.
+  * Rozwiązuje to problem fałszywych weryfikacji w systemach macOS i Linux, gdy dostępna jest instalacja pod komendą `python3`, podczas gdy starsza logika i tak wymuszała użycie `python`. 
+  * W systemie Windows nowa priorytetyzacja omija problem zwracania atrapy (aliasu wywołującego Microsoft Store) przez `shutil.which("python")`, znacząco zwiększając niezawodność uruchamiania kodu na różnych platformach. Pamiętano także, by nie stosować zablokowanego w środowisku PyInstaller `sys.executable`.
+* Uproszczono funkcję sprawdzającą poprawność instalacji interpretera (`check_python_installed`) celem dostosowania do nowego mechanizmu ładowania ścieżek bez wywoływania pętli błędu i nieprawidłowych komunikatów o braku środowiska.
+
+---
+
+## [1.0.5.2]
+
+### Główne zmiany i stabilizacja
+* **Dziedziczenie katalogu roboczego:** Wprowadzono obligatoryjne przekazywanie argumentu `cwd=os.path.dirname(self.current_file)` we wszystkich trzech gałęziach systemu uruchamiania kodu (Windows, macOS, Linux). Rozwiązuje to problem zapisywania plików konfiguracyjnych w złym miejscu (np. w ścieżce edytora zamiast skryptu) oraz błędy w importach sąsiadujących modułów podczas używania polecenia `-c` w środowisku Windows.
+* **Zmiana wersji:** Zaktualizowano identyfikator wydania do `v1.0.5.2`.
+
+---
+
+## [1.0.5.1]
+
+### Zmienione i Ulepszone
+* **Asynchroniczne autouzupełnianie (Jedi):** Przeniesiono mechanizm podpowiedzi kodu do osobnego wątku (`QThread`), co całkowicie eliminuje "zamrażanie" interfejsu graficznego podczas szybkiego pisania.
+* **Weryfikacja składni w tle:** Sprawdzanie poprawności kodu (AST) przed jego uruchomieniem działa teraz asynchronicznie, zwiększając responsywność edytora.
+* **Inteligentny Backspace:** Usprawniono usuwanie par znaków (nawiasy, cudzysłowy). Usuwanie pierwszej części pary automatycznie kasuje drugą, jeśli kursor znajduje się między nimi.
+* **Bezpieczne zamykanie wątków:** Poprawiono obsługę zdarzenia `closeEvent`, aby aplikacja poprawnie i bezpiecznie ubijała działające w tle wątki analizy kodu podczas wychodzenia z edytora.
+
+### Naprawione
+* Usunięto błędy związane z nakładaniem się żądań autouzupełniania podczas błyskawicznego wprowadzania kolejnych znaków.
+
+---
+
 ## [1.0.5.0]
 
 ### Optymalizacje asynchroniczności i czytelności
