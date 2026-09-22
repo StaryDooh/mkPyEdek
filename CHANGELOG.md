@@ -1,5 +1,39 @@
 # Changelog - mkPyEdek
 
+## [1.0.6.2]
+
+### Naprawione (Fixed)
+- **Instalator:** Dodano automatyczne usuwanie wadliwego pliku `config.json` (ze starszych wersji) z katalogu użytkownika (`{%USERPROFILE}\.mkPyEdek\`) podczas instalacji nowej wersji.
+- **Stabilność GUI:** Wdrożono zabezpieczenie przed "lawiną okien" błędów (reentrancy) w przypadku powtarzających się wyjątków (np. podczas obsługi zdarzeń klawiatury).
+- **Zarządzanie wątkami:** Zabezpieczono program przed błędami z wątków pobocznych (wyjątki z `QThread` są teraz logowane bez zawieszania głównej pętli GUI).
+
+---
+
+## [1.0.6.1]
+
+### Zmienione (Changed)
+- **Wydajność (Jedi):** Przeniesiono system autouzupełniania kodu (Jedi) do dedykowanego wątku w tle (`QThread`).
+- **Optymalizacja pisania:** Wprowadzono opóźnienie (debounce timer 250ms) dla autouzupełniania, co całkowicie wyeliminowało zacinanie się edytora podczas szybkiego wpisywania kodu.
+- **Weryfikacja składni:** Zastąpiono powolny wątek sprawdzający składnię na rzecz błyskawicznej weryfikacji przy pomocy wbudowanej funkcji `compile()` uruchamianej bezpośrednio przed wykonaniem kodu.
+- **Zamykanie programu:** Poprawiono logikę zamykania okna (`closeEvent`) – aplikacja teraz bezpiecznie czeka na zakończenie pracy wątków pobocznych przed wyjściem.
+
+---
+
+## [1.0.6.0]
+
+### Dodane (Added)
+- **Globalna ochrona przed awariami:** Zaimplementowano niestandardowy `sys.excepthook` przechwytujący błędy krytyczne aplikacji. 
+- **Odzyskiwanie danych (Recovery):** W przypadku wystąpienia błędu krytycznego, edytor automatycznie zapisuje kopię awaryjną aktualnego kodu w katalogu `~/.mkPyEdek/recovery/recovery_YYYYMMDD_HHMMSS.py`.
+- **Okno błędu krytycznego:** Użytkownik otrzymuje czytelny komunikat o ścieżce do odzyskanego pliku oraz ma możliwość wyboru: natychmiastowe zakończenie programu lub kontynuacja pracy na własne ryzyko.
+
+---
+
+## [1.0.5.9]
+
+### Dodane / Zmienione / Naprawione
+- [Tutaj wpisz zmiany i poprawki, które zostały wdrożone w wersji 1.0.5.9]
+- Bieżąca obsługa i stabilizacja działania edytora przed wdrożeniem nowych mechanizmów bezpieczeństwa i autouzupełniania w linii 1.0.6.x.
+
 ---
 
 ## [1.0.5.8]

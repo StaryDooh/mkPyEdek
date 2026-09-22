@@ -1,5 +1,4 @@
-#define MyAppVersion "1.0.5.8"
-
+#define MyAppVersion "1.0.6.2"
 
 [Setup]
 ; Unikalny identyfikator aplikacji
@@ -18,7 +17,7 @@ LicenseFile=Licencja.txt
 
 ; Gdzie ma zostać zapisany gotowy instalator
 OutputDir=GitHub
-OutputBaseFilename=mkPyEdek_v{#myAppVersion}
+OutputBaseFilename=mkPyEdek_v{#MyAppVersion}
 
 ; Ikona instalatora
 SetupIconFile=ikona.ico
@@ -28,12 +27,15 @@ Compression=lzma
 SolidCompression=yes
 WizardStyle=modern
 
-; --- ZMIANA: Dodanie języka polskiego ---
 [Languages]
 Name: "polish"; MessagesFile: "compiler:Languages\Polish.isl"
 
 [Tasks]
 Name: "desktopicon"; Description: "{cm:CreateDesktopIcon}"; GroupDescription: "{cm:AdditionalIcons}"; Flags: checkablealone
+
+; --- Czyszczenie nieprawidłowego pliku konfiguracyjnego ze starszych wersji ---
+[InstallDelete]
+Type: files; Name: "{%USERPROFILE}\.mkPyEdek\config.json"
 
 [Files]
 ; 1. Główny plik wykonywalny

@@ -9,14 +9,14 @@ import json
 import urllib.parse
 import logging
 import shlex
-import ast
-import threading
 import time
 import traceback
+import threading
+from datetime import datetime
 from PyQt6.QtWidgets import (QApplication, QMainWindow, QFileDialog,
                              QMessageBox, QWidget, QVBoxLayout, QStyle, QInputDialog)
 from PyQt6.QtGui import QAction, QFont, QColor, QIcon, QActionGroup
-from PyQt6.QtCore import Qt, QThread, pyqtSignal
+from PyQt6.QtCore import Qt, QThread, pyqtSignal, QTimer
 from PyQt6.Qsci import QsciScintilla, QsciLexerPython
 
 # --- KONFIGURACJA ŚCIEŻEK I LOGÓW ---
@@ -28,6 +28,7 @@ else:
 USER_DIR = os.path.join(os.path.expanduser("~"), ".mkPyEdek")
 CONFIG_FILE = os.path.join(USER_DIR, "config.json")
 LOG_FILE = os.path.join(USER_DIR, "app.log")
+RECOVERY_DIR = os.path.join(USER_DIR, "recovery")
 
 os.makedirs(USER_DIR, exist_ok=True)
 
@@ -39,19 +40,60 @@ logging.basicConfig(
     encoding='utf-8'
 )
 
+# --- GLOBALNA OBSŁUGA WYJĄTKÓW ---
+_in_handler = False
+
 def global_exception_handler(exctype, value, tb):
-    err_msg = "".join(traceback.format_exception(exctype, value, tb))
-    logging.error(f"Nieobsłużony wyjątek:\n{err_msg}")
+    global _in_handler
     
-    if QApplication.instance():
+    # Logowanie wyjątku (bezpieczne niezależnie od wątku)
+    err = "".join(traceback.format_exception(exctype, value, tb))
+    logging.error("Nieobsłużony wyjątek:\n%s", err)
+    
+    app = QApplication.instance()
+    
+    # Warunki bezpieczeństwa: brak aplikacji, reentrancja lub wywołanie z wątku roboczego
+    if app is None or _in_handler or threading.current_thread() is not threading.main_thread():
+        return                               
+
+    _in_handler = True
+    try:
+        backup_msg = "Nie udało się utworzyć kopii zapasowej."
+        
+        # Próba odnalezienia głównego okna i zapisania awaryjnej kopii kodu
+        main_window = next((w for w in app.topLevelWidgets() if isinstance(w, QMainWindow)), None)
+        if main_window and hasattr(main_window, 'editor') and main_window.editor is not None:
+            try:
+                code_content = main_window.editor.text()
+                if code_content:
+                    os.makedirs(RECOVERY_DIR, exist_ok=True)
+                    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+                    recovery_path = os.path.join(RECOVERY_DIR, f"recovery_{timestamp}.py")
+                    
+                    with open(recovery_path, "w", encoding="utf-8") as f:
+                        f.write(code_content)
+                    backup_msg = f"Twój kod został awaryjnie zapisany w:\n{recovery_path}"
+            except Exception as save_err:
+                logging.error(f"Błąd tworzenia kopii zapasowej: {save_err}")
+                backup_msg = f"Próba utworzenia kopii zapasowej nie powiodła się: {save_err}"
+
+        # Wyświetlenie okna błędu w głównym wątku GUI
         msg = QMessageBox()
         msg.setIcon(QMessageBox.Icon.Critical)
-        msg.setWindowTitle("Błąd aplikacji")
-        msg.setText("Wystąpił nieoczekiwany błąd. Twój kod nie został utracony.")
-        msg.setDetailedText(err_msg)
+        msg.setWindowTitle("Błąd krytyczny")
+        msg.setText("Wystąpił nieoczekiwany błąd w aplikacji.")
+        msg.setInformativeText(f"{backup_msg}\n\nAplikacja może działać niestabilnie.")
+        msg.setDetailedText(err)
+        
+        btn_quit = msg.addButton("Zakończ program", QMessageBox.ButtonRole.DestructiveRole)
+        msg.addButton("Kontynuuj", QMessageBox.ButtonRole.RejectRole)
+        
         msg.exec()
-    else:
-        sys.__excepthook__(exctype, value, tb)
+        
+        if msg.clickedButton() == btn_quit:
+            app.quit()
+    finally:
+        _in_handler = False
 
 sys.excepthook = global_exception_handler
 
@@ -64,28 +106,10 @@ def resource_path(relative_path):
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# Weryfikacja składni w tle (QThread) - nie blokuje GUI
-# ─────────────────────────────────────────────────────────────────────────────
-class SyntaxCheckThread(QThread):
-    result_ready = pyqtSignal(object)
-
-    def __init__(self, source, filename):
-        super().__init__()
-        self.source = source
-        self.filename = filename
-
-    def run(self):
-        try:
-            ast.parse(self.source, filename=self.filename)
-            self.result_ready.emit(None)
-        except Exception as e:
-            self.result_ready.emit(e)
-
-# ─────────────────────────────────────────────────────────────────────────────
-# Autouzupełnianie Jedi w tle (QThread) - nie blokuje GUI podczas pisania
+# Autouzupełnianie Jedi w tle (QThread) - pobiera listę w tle
 # ─────────────────────────────────────────────────────────────────────────────
 class JediCompletionThread(QThread):
-    result_ready = pyqtSignal(dict)   # emituje słownik {nazwa: obiekt_completion}
+    result_ready = pyqtSignal(list)
     
     def __init__(self, source, line, index):
         super().__init__()
@@ -97,11 +121,11 @@ class JediCompletionThread(QThread):
         try:
             script = jedi.Script(self.source)
             completions = script.complete(self.line + 1, self.index)
-            result = {c.name: c for c in completions} if completions else {}
+            result = [c.name for c in completions] if completions else []
             self.result_ready.emit(result)
         except Exception as e:
             logging.warning(f"Błąd autouzupełniania Jedi: {e}")
-            self.result_ready.emit({})
+            self.result_ready.emit([])
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -119,12 +143,14 @@ class PythonEditor(QsciScintilla):
         self.setAutoIndent(True)
         self.setCaretLineVisible(True)
 
-        self.current_completions = {}
-        self._completions_lock = threading.Lock()
-        self._last_completion_time = 0.0
+        self.current_completions = []
         self._jedi_thread = None
         self._pending_completion = False
-        self._pending_completion_pos = (0, 0)
+
+        self._debounce = QTimer(self)
+        self._debounce.setSingleShot(True)
+        self._debounce.setInterval(250)
+        self._debounce.timeout.connect(self._run_jedi)
 
         self.userListActivated.connect(self.on_user_list_activated)
         self.apply_theme("Jasny")
@@ -261,63 +287,40 @@ class PythonEditor(QsciScintilla):
         return word
 
     def request_jedi_completions(self):
-        now = time.monotonic()
-        if now - self._last_completion_time < 0.35:
-            return
-        self._last_completion_time = now
-        
-        line, index = self.getCursorPosition()
-        self._pending_completion_pos = (line, index)
-        
-        if self._jedi_thread and self._jedi_thread.isRunning():
+        self._debounce.start()
+
+    def _run_jedi(self):
+        if self._jedi_thread is not None:
             self._pending_completion = True
             return
             
-        self._pending_completion = False
-        self._start_jedi_thread(line, index)
+        line, index = self.getCursorPosition()
+        t = JediCompletionThread(self.text(), line, index)
+        t.result_ready.connect(self._on_jedi_completed)
+        t.finished.connect(self._on_jedi_finished)
+        t.finished.connect(t.deleteLater)
+        self._jedi_thread = t
+        t.start()
 
-    def _start_jedi_thread(self, line, index):
-        if self._jedi_thread:
-            try:
-                self._jedi_thread.result_ready.disconnect()
-            except TypeError:
-                pass
-            self._jedi_thread.deleteLater()
-            
-        self._jedi_thread = JediCompletionThread(self.text(), line, index)
-        self._jedi_thread.result_ready.connect(self._on_jedi_completed)
-        self._jedi_thread.finished.connect(self._jedi_thread.deleteLater)
-        self._jedi_thread.start()
-
-    def _on_jedi_completed(self, new_completions):
-        if self.sender() is not self._jedi_thread:
+    def _on_jedi_completed(self, names):
+        t = self.sender()
+        if not names or (t.line, t.index) != self.getCursorPosition():
             return
-
-        self._jedi_thread = None
         
-        if getattr(self, '_pending_completion', False):
+        self.current_completions = names
+        self.showUserList(1, sorted(names))
+
+    def _on_jedi_finished(self):
+        self._jedi_thread = None
+        if self._pending_completion:
             self._pending_completion = False
-            line, index = self.getCursorPosition()
-            if (line, index) != getattr(self, '_pending_completion_pos', (line, index)):
-                self._start_jedi_thread(line, index)
-                return
-                
-        if not new_completions:
-            return
-            
-        with self._completions_lock:
-            self.current_completions = new_completions
-            
-        self.showUserList(1, sorted(new_completions.keys()))
+            self._debounce.start()
 
     def on_user_list_activated(self, list_id, text):
         if list_id != 1:
             return
 
-        with self._completions_lock:
-            completions_snapshot = dict(self.current_completions)
-
-        if text not in completions_snapshot:
+        if text not in self.current_completions:
             return
 
         line, index = self.getCursorPosition()
@@ -333,19 +336,19 @@ class PythonEditor(QsciScintilla):
 # GŁÓWNA KLASA APLIKACJI
 # ─────────────────────────────────────────────────────────────────────────────
 class MkPyEdekGUI(QMainWindow):
-    VERSION = "1.0.5.8"
+    VERSION = "1.0.6.2"
 
     def __init__(self, file_to_open=None):
         super().__init__()
         self.current_file = None
-        self.python_cmd = shutil.which("python3") or shutil.which("python") or "python"
         self.recent_files = []
         self.current_theme = "Jasny"
         self.last_dir = os.path.expanduser("~/Documents")
         self.last_search = ""
-        self._syntax_thread = None
-        self._code_running = False
         self._original_encoding = 'utf-8'
+
+        self.python_cmd = None
+        self._manual_python_cmd = False
 
         self.load_config()
         self.init_ui()
@@ -354,6 +357,23 @@ class MkPyEdekGUI(QMainWindow):
 
         if file_to_open:
             self.open_specific_file(file_to_open)
+
+    def _detect_python(self):
+        names = ["py", "python", "python3"] if platform.system() == "Windows" else ["python3", "python"]
+        for name in names:
+            path = shutil.which(name)
+            if not path:
+                continue
+            try:
+                flags = getattr(subprocess, "CREATE_NO_WINDOW", 0) 
+                r = subprocess.run([path, "--version"], capture_output=True, text=True, timeout=5,
+                                   creationflags=flags)
+            except (OSError, subprocess.SubprocessError):
+                continue
+            
+            if r.returncode == 0 and (r.stdout + r.stderr).startswith("Python"):
+                return path
+        return None
 
     def load_config(self):
         if os.path.exists(CONFIG_FILE):
@@ -365,21 +385,29 @@ class MkPyEdekGUI(QMainWindow):
                     stored_dir = data.get("last_dir", "")
                     if stored_dir and os.path.isdir(stored_dir):
                         self.last_dir = stored_dir
+                    
                     stored_cmd = data.get("python_cmd", "")
                     if stored_cmd and os.path.isfile(stored_cmd) and os.access(stored_cmd, os.X_OK):
                         self.python_cmd = stored_cmd
+                        self._manual_python_cmd = True
             except Exception as e:
                 logging.warning(f"Nie udało się wczytać konfiguracji: {e}")
 
+        if not self.python_cmd:
+            self.python_cmd = self._detect_python()
+
     def save_config(self):
         try:
+            config_data = {
+                "recent_files": self.recent_files,
+                "last_dir": self.last_dir,
+                "theme": self.current_theme,
+            }
+            if self._manual_python_cmd and self.python_cmd:
+                config_data["python_cmd"] = self.python_cmd
+
             with open(CONFIG_FILE, 'w', encoding='utf-8') as f:
-                json.dump({
-                    "recent_files": self.recent_files,
-                    "last_dir": self.last_dir,
-                    "theme": self.current_theme,
-                    "python_cmd": self.python_cmd,
-                }, f, ensure_ascii=False, indent=4)
+                json.dump(config_data, f, ensure_ascii=False, indent=4)
         except Exception as e:
             logging.warning(f"Nie udało się zapisać konfiguracji: {e}")
 
@@ -653,7 +681,7 @@ class MkPyEdekGUI(QMainWindow):
             self.recent_menu.addAction(action)
 
     def check_python_installed(self):
-        if os.path.isfile(self.python_cmd) or shutil.which(self.python_cmd):
+        if self.python_cmd:
             return
 
         msg = QMessageBox(self)
@@ -672,9 +700,10 @@ class MkPyEdekGUI(QMainWindow):
             )
             if path and os.path.isfile(path) and os.access(path, os.X_OK):
                 self.python_cmd = path
+                self._manual_python_cmd = True
                 self.save_config()
             else:
-                QMessageBox.warning(self, "Błąd", "Wskazany plik nie jest wykonywalny.")
+                QMessageBox.warning(self, "Błąd", "Wskazany plik nie jest poprawnym plikiem wykonywalnym.")
         elif msg.clickedButton() == btn_download:
             webbrowser.open("https://www.python.org/downloads/")
 
@@ -698,21 +727,10 @@ class MkPyEdekGUI(QMainWindow):
             event.ignore()
             return
 
-        if self._syntax_thread and self._syntax_thread.isRunning():
-            try:
-                self._syntax_thread.result_ready.disconnect()
-            except TypeError:
-                pass
-            self._syntax_thread.quit()
-            self._syntax_thread.wait()
-            
+        # Bezpieczne zatrzymanie debouncera i wątku Jedi przed wyjściem
+        self.editor._debounce.stop()
         if self.editor._jedi_thread and self.editor._jedi_thread.isRunning():
-            try:
-                self.editor._jedi_thread.result_ready.disconnect()
-            except TypeError:
-                pass
-            self.editor._jedi_thread.quit()
-            self.editor._jedi_thread.wait()
+            self.editor._jedi_thread.wait(500)
             
         event.accept()
 
@@ -734,6 +752,7 @@ class MkPyEdekGUI(QMainWindow):
                 self.open_specific_file(file_name)
 
     def open_specific_file(self, file_path):
+        file_path = os.path.abspath(file_path)
         if os.path.exists(file_path):
             try:
                 content = None
@@ -815,60 +834,38 @@ class MkPyEdekGUI(QMainWindow):
         return False
 
     def run_code(self):
-        if getattr(self, '_code_running', False):
-            return
-
         if not self.current_file:
             if not self.save_as_file():
                 return
 
-        if self._syntax_thread and self._syntax_thread.isRunning():
-            return
-
-        if self._syntax_thread:
-            try:
-                self._syntax_thread.result_ready.disconnect()
-            except TypeError:
-                pass
-            self._syntax_thread.deleteLater()
-            self._syntax_thread = None
-
-        self._code_running = True
-        self._syntax_thread = SyntaxCheckThread(self.editor.text(), self.current_file)
-        self._syntax_thread.result_ready.connect(self._on_syntax_check_done)
-        self._syntax_thread.finished.connect(self._syntax_thread.deleteLater)
-        self._syntax_thread.start()
-        self.statusBar().showMessage("Sprawdzanie składni…")
-
-    def _on_syntax_check_done(self, error):
-        self.statusBar().showMessage("Gotowy")
-        self._syntax_thread = None
-
-        if error is not None:
-            self._code_running = False
-            if isinstance(error, SyntaxError):
-                line = error.lineno - 1 if error.lineno else 0
-                self.editor.setCursorPosition(line, 0)
-                self.editor.setSelection(line, 0, line, self.editor.lineLength(line))
-                QMessageBox.critical(self, "Błąd składni", f"Błąd w linii {error.lineno}:\n{error.msg}")
-            else:
-                QMessageBox.critical(self, "Błąd analizy kodu", f"Nie udało się zweryfikować składni:\n{error}")
-            return
-
+        source = self.editor.text()
+        
+        # Szybka synchroniczna walidacja za pomocą built-in compile()
         try:
-            if not self.save_file():
-                return
-            self._launch_process()
-        finally:
-            self._code_running = False
+            compile(source, self.current_file or "<string>", "exec", dont_inherit=True)
+        except SyntaxError as e:
+            line = e.lineno - 1 if e.lineno else 0
+            self.editor.setCursorPosition(line, 0)
+            self.editor.setSelection(line, 0, line, self.editor.lineLength(line))
+            QMessageBox.critical(self, "Błąd składni", f"Błąd w linii {e.lineno}:\n{e.msg}")
+            return
+        except (ValueError, RecursionError, MemoryError) as e:
+            QMessageBox.critical(self, "Błąd analizy kodu", f"Nie udało się zweryfikować składni:\n{e}")
+            return
+
+        if not self.save_file():
+            return
+            
+        self._launch_process()
 
     def _launch_process(self):
         try:
-            env = os.environ.copy()
-            env["PYTHON_COLORS"] = "1"
-            working_dir = os.path.dirname(self.current_file)
+            working_dir = os.path.abspath(os.path.dirname(self.current_file))
 
             if platform.system() == "Windows":
+                env = os.environ.copy()
+                env["PYTHON_COLORS"] = "1"
+                
                 runner = (
                     "import sys, os, runpy, traceback\n"
                     "path = sys.argv[1]; sys.argv = sys.argv[1:]\n"
@@ -889,34 +886,32 @@ class MkPyEdekGUI(QMainWindow):
             elif platform.system() == "Darwin":
                 import tempfile, stat
                 script_content = (
-                    f"#!/bin/bash\n"
+                    "#!/bin/bash\n"
+                    'rm -- "$0"\n'
+                    f"cd {shlex.quote(working_dir)} || exit 1\n"
+                    "export PYTHON_COLORS=1\n"
                     f"{shlex.quote(self.python_cmd)} {shlex.quote(self.current_file)}\n"
-                    f"echo\nread -n 1 -s -p 'Naciśnij klawisz...'\n"
-                    f'rm -- "$0"\n'
+                    "echo\nread -n 1 -s -p 'Naciśnij klawisz...'\n"
                 )
                 with tempfile.NamedTemporaryFile(mode='w', suffix='.sh', delete=False, encoding='utf-8') as tmp:
                     tmp.write(script_content)
                     tmp_path = tmp.name
                 os.chmod(tmp_path, stat.S_IRWXU)
                 
-                escaped_path = tmp_path.replace('\\', '\\\\').replace('"', '\\"')
-                applescript = f'tell app "Terminal" to do script "{escaped_path}"'
+                cmd = shlex.quote(tmp_path).replace("\\", "\\\\").replace('"', '\\"')
+                osa = f'tell application "Terminal"\nactivate\ndo script "{cmd}"\nend tell'
                 
-                subprocess.Popen(
-                    ["osascript", "-e", applescript], 
-                    env=env,
-                    cwd=working_dir
-                )
+                subprocess.Popen(["osascript", "-e", osa])
 
             else:
                 safe_cmd = (
-                    f"{shlex.quote(self.python_cmd)} {shlex.quote(self.current_file)}"
-                    f'; echo; read -n 1 -s -p "Naciśnij klawisz..."'
+                    f"cd {shlex.quote(working_dir)} || exit 1; "
+                    "export PYTHON_COLORS=1; "
+                    f"{shlex.quote(self.python_cmd)} {shlex.quote(self.current_file)}; "
+                    f'echo; read -n 1 -s -p "Naciśnij klawisz..."'
                 )
                 subprocess.Popen(
-                    ["x-terminal-emulator", "-e", "bash", "-c", safe_cmd],
-                    env=env,
-                    cwd=working_dir
+                    ["x-terminal-emulator", "-e", "bash", "-c", safe_cmd]
                 )
 
         except Exception as e:
