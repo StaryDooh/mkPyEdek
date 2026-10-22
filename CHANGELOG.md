@@ -1,5 +1,27 @@
 # Changelog - mkPyEdek
 
+## [1.0.6.5]
+
+### Naprawione (Fixed)
+- **Uruchamianie kodu bez interpretera (F5):** Gdy nie wykryto Pythona (np. po wybraniu „Ignoruj” w oknie startowym), naciśnięcie F5 wyświetla teraz okno „Brak interpretera Python” z opcjami „Wskaż plik” / „Pobierz Pythona” / „Ignoruj”, zamiast mylącego komunikatu „Nie uruchomiono interpretera: expected str…” (`TypeError` z `subprocess.Popen`). Po wskazaniu poprawnego interpretera kod uruchamia się od razu.
+- **Kolejność operacji:** Sprawdzenie interpretera odbywa się przed zapisem pliku, więc przy jego braku nie pojawia się już niepotrzebne okno „Zapisz jako”.
+
+---
+
+## [1.0.6.4]
+
+### Naprawione (Fixed)
+- **Dublowanie nawiasów zamykających:** Wpisanie `)`, `]` lub `}`, gdy ten sam znak stoi bezpośrednio za kursorem, przesuwa kursor za nawias zamiast wstawiać kolejny. Ręczne wpisanie `print()` daje teraz `print()` zamiast `print())`. Przeskakiwanie działa analogicznie do istniejącej obsługi cudzysłowów i nie dotyczy sytuacji z zaznaczonym tekstem.
+
+---
+
+## [1.0.6.3]
+
+### Naprawione (Fixed)
+- **Utrata danych przez „Cofnij” po otwarciu pliku:** Otwarcie pliku oraz polecenie „Nowy” czyszczą teraz historię cofania edytora (`SCI_EMPTYUNDOBUFFER`). Wcześniej `Ctrl+Z` po otwarciu pliku B przywracał treść poprzedniego pliku A, a kolejne `Ctrl+S` nadpisywało plik B cudzą zawartością.
+
+---
+
 ## [1.0.6.2]
 
 ### Naprawione (Fixed)

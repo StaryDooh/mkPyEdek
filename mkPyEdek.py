@@ -245,6 +245,13 @@ class PythonEditor(QsciScintilla):
         key_text = event.text()
         pairs = {'(': ')', '[': ']', '{': '}', '"': '"', "'": "'"}
 
+        # Przeskakiwanie nawiasu zamykającego, jeśli już stoi za kursorem
+        if key_text in (')', ']', '}') and not self.hasSelectedText():
+            line, index = self.getCursorPosition()
+            if self.text(line)[index:index + 1] == key_text:
+                self.setCursorPosition(line, index + 1)
+                return
+
         if key_text in pairs:
             line, index = self.getCursorPosition()
 
@@ -336,7 +343,7 @@ class PythonEditor(QsciScintilla):
 # GŁÓWNA KLASA APLIKACJI
 # ─────────────────────────────────────────────────────────────────────────────
 class MkPyEdekGUI(QMainWindow):
-    VERSION = "1.0.6.2"
+    VERSION = "1.0.6.5"
 
     def __init__(self, file_to_open=None):
         super().__init__()
@@ -737,6 +744,8 @@ class MkPyEdekGUI(QMainWindow):
     def new_file(self):
         if self.maybe_save():
             self.editor.clear()
+            # Wyczyść historię cofania, aby Ctrl+Z nie przywracał poprzedniego pliku
+            self.editor.SendScintilla(QsciScintilla.SCI_EMPTYUNDOBUFFER)
             self.current_file = None
             self.editor.setModified(False)
             self._original_encoding = 'utf-8'
@@ -776,6 +785,8 @@ class MkPyEdekGUI(QMainWindow):
                 self._original_encoding = detected_enc
 
                 self.editor.setText(content)
+                # Wyczyść historię cofania, aby Ctrl+Z nie przywracał poprzedniego pliku
+                self.editor.SendScintilla(QsciScintilla.SCI_EMPTYUNDOBUFFER)
                 self.current_file = file_path
                 self.editor.setModified(False)
                 self.add_to_recent(file_path)
@@ -834,6 +845,12 @@ class MkPyEdekGUI(QMainWindow):
         return False
 
     def run_code(self):
+        # Brak interpretera – zaproponuj wskazanie/pobranie zamiast mylącego błędu Popen
+        if not self.python_cmd:
+            self.check_python_installed()
+            if not self.python_cmd:
+                return
+
         if not self.current_file:
             if not self.save_as_file():
                 return

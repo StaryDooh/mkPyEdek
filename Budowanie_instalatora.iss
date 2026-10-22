@@ -1,4 +1,4 @@
-#define MyAppVersion "1.0.6.2"
+#define MyAppVersion "1.0.6.5"
 
 [Setup]
 ; Unikalny identyfikator aplikacji
