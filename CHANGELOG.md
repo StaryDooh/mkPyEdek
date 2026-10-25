@@ -1,5 +1,49 @@
 # Changelog - mkPyEdek
 
+---
+
+## [1.0.6.10]
+
+### Naprawione (Fixed)
+- **Zaznaczanie pliku w Eksploratorze Windows:** Przy „Udostępnij w Classroom” Eksplorator poprawnie otwiera folder z zaznaczonym plikiem także wtedy, gdy ścieżka zawiera spacje (np. `C:\Users\Jan Kowalski\...`). Wcześniej cały argument `/select,…` był ujmowany w cudzysłów, czego Eksplorator nie rozpoznaje, i otwierał się folder „Dokumenty”.
+
+---
+
+## [1.0.6.9]
+
+### Naprawione (Fixed)
+- **„Udostępnij w Classroom”:** Classroom i eksplorator plików otwierają się teraz wyłącznie po udanym zapisie pliku. Wcześniej wynik zapisu był ignorowany – po odmowie zmiany kodowania (np. pliki CP1250) lub błędzie zapisu uczeń trafiał do Classroom z nieaktualną wersją pliku na dysku.
+- **Podwójny zapis nowego pliku:** Usunięto zbędne drugie zapisanie pliku przy udostępnianiu nowego, jeszcze niezapisanego dokumentu.
+
+---
+
+## [1.0.6.8]
+
+### Naprawione (Fixed)
+- **Zamykanie programu podczas pracy Jedi:** Program czeka teraz bez limitu czasu na zakończenie wątku autouzupełniania (wcześniej `wait(500)`), co eliminuje ryzyko awaryjnego zakończenia procesu („QThread: Destroyed while thread is still running”) przy zamykaniu okna w trakcie analizy większego pliku.
+- **Wyjście z okna błędu krytycznego:** Zatrzymanie wątku Jedi jest podpięte także pod `QApplication.aboutToQuit`, więc działa również przy wyjściu przyciskiem „Zakończ program”, który pomija `closeEvent`.
+
+### Zmienione (Changed)
+- **Refaktoryzacja:** Logika zatrzymywania autouzupełniania została przeniesiona do metody `PythonEditor.shutdown()`; okno główne nie odwołuje się już do prywatnych pól edytora. Po rozpoczęciu zamykania edytor nie uruchamia nowych zapytań Jedi i nie wyświetla podpowiedzi.
+
+---
+
+## [1.0.6.7]
+
+### Naprawione (Fixed)
+- **Filtr okna „Wskaż plik”:** Poprawiono filtr plików przy ręcznym wskazywaniu interpretera. Wzorce były rozdzielone średnikami (`*.exe; python; python3`), których Qt nie rozpoznaje, przez co pliki `.exe` nie były wyświetlane. Filtr zależy teraz od systemu: `python*.exe py.exe` w Windows oraz `python python3 python3.*` w macOS/Linux.
+
+---
+
+## [1.0.6.6]
+
+### Naprawione (Fixed)
+- **Weryfikacja interpretera Pythona:** Ścieżka `python_cmd` z `config.json`, plik wskazany ręcznie („Wskaż plik”) oraz wyniki autodetekcji są teraz sprawdzane przez faktyczne uruchomienie `--version` (nowa metoda `_is_valid_python`). Wcześniej w Windows akceptowany był każdy istniejący plik, co przy błędnym wpisie w konfiguracji powodowało migające i natychmiast znikające okno konsoli po F5.
+- **Samonaprawa konfiguracji:** Nieprawidłowy wpis `python_cmd` jest pomijany (z ostrzeżeniem w `app.log`), program wraca do autodetekcji i usuwa błędny wpis z `config.json`.
+- **Okno „Wskaż plik”:** Anulowanie wyboru nie wyświetla już komunikatu o błędzie; wskazanie pliku, który nie jest interpreterem, pokazuje czytelną podpowiedź.
+
+---
+
 ## [1.0.6.5]
 
 ### Naprawione (Fixed)

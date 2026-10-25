@@ -146,6 +146,7 @@ class PythonEditor(QsciScintilla):
         self.current_completions = []
         self._jedi_thread = None
         self._pending_completion = False
+        self._shutting_down = False
 
         self._debounce = QTimer(self)
         self._debounce.setSingleShot(True)
@@ -294,9 +295,34 @@ class PythonEditor(QsciScintilla):
         return word
 
     def request_jedi_completions(self):
+        if self._shutting_down:
+            return
         self._debounce.start()
 
+    def shutdown(self):
+        """Zatrzymuje autouzupełnianie i czeka na zakończenie wątku Jedi.
+        Wywoływane przy zamykaniu programu; można wywołać wielokrotnie."""
+        if self._shutting_down:
+            return
+        self._shutting_down = True
+        self._debounce.stop()
+        self._pending_completion = False
+
+        t = self._jedi_thread
+        if t is not None:
+            # Wynik nie jest już potrzebny – odłącz sygnały, aby nie trafiły do zamykanego okna
+            try:
+                t.result_ready.disconnect()
+            except TypeError:
+                pass
+            if t.isRunning():
+                # Bez limitu czasu: zniszczenie działającego QThread kończy proces awaryjnie
+                t.wait()
+        self._jedi_thread = None
+
     def _run_jedi(self):
+        if self._shutting_down:
+            return
         if self._jedi_thread is not None:
             self._pending_completion = True
             return
@@ -311,6 +337,8 @@ class PythonEditor(QsciScintilla):
 
     def _on_jedi_completed(self, names):
         t = self.sender()
+        if self._shutting_down or t is None:
+            return
         if not names or (t.line, t.index) != self.getCursorPosition():
             return
         
@@ -319,7 +347,7 @@ class PythonEditor(QsciScintilla):
 
     def _on_jedi_finished(self):
         self._jedi_thread = None
-        if self._pending_completion:
+        if self._pending_completion and not self._shutting_down:
             self._pending_completion = False
             self._debounce.start()
 
@@ -343,7 +371,7 @@ class PythonEditor(QsciScintilla):
 # GŁÓWNA KLASA APLIKACJI
 # ─────────────────────────────────────────────────────────────────────────────
 class MkPyEdekGUI(QMainWindow):
-    VERSION = "1.0.6.5"
+    VERSION = "1.0.6.10"
 
     def __init__(self, file_to_open=None):
         super().__init__()
@@ -365,24 +393,29 @@ class MkPyEdekGUI(QMainWindow):
         if file_to_open:
             self.open_specific_file(file_to_open)
 
+    @staticmethod
+    def _is_valid_python(path):
+        """Sprawdza, czy plik jest działającym interpreterem Pythona (uruchamia `--version`)."""
+        if not path or not isinstance(path, str) or not os.path.isfile(path):
+            return False
+        try:
+            flags = getattr(subprocess, "CREATE_NO_WINDOW", 0)
+            r = subprocess.run([path, "--version"], capture_output=True, text=True, timeout=5,
+                               creationflags=flags)
+        except (OSError, subprocess.SubprocessError, ValueError):
+            return False
+        return r.returncode == 0 and (r.stdout + r.stderr).strip().startswith("Python")
+
     def _detect_python(self):
         names = ["py", "python", "python3"] if platform.system() == "Windows" else ["python3", "python"]
         for name in names:
             path = shutil.which(name)
-            if not path:
-                continue
-            try:
-                flags = getattr(subprocess, "CREATE_NO_WINDOW", 0) 
-                r = subprocess.run([path, "--version"], capture_output=True, text=True, timeout=5,
-                                   creationflags=flags)
-            except (OSError, subprocess.SubprocessError):
-                continue
-            
-            if r.returncode == 0 and (r.stdout + r.stderr).startswith("Python"):
+            if path and self._is_valid_python(path):
                 return path
         return None
 
     def load_config(self):
+        invalid_stored_cmd = False
         if os.path.exists(CONFIG_FILE):
             try:
                 with open(CONFIG_FILE, 'r', encoding='utf-8') as f:
@@ -394,14 +427,23 @@ class MkPyEdekGUI(QMainWindow):
                         self.last_dir = stored_dir
                     
                     stored_cmd = data.get("python_cmd", "")
-                    if stored_cmd and os.path.isfile(stored_cmd) and os.access(stored_cmd, os.X_OK):
-                        self.python_cmd = stored_cmd
-                        self._manual_python_cmd = True
+                    if stored_cmd:
+                        if self._is_valid_python(stored_cmd):
+                            self.python_cmd = stored_cmd
+                            self._manual_python_cmd = True
+                        else:
+                            # Błędny wpis (np. zła ścieżka) – porzuć go i wróć do autodetekcji
+                            logging.warning(f"Pominięto nieprawidłowy interpreter z konfiguracji: {stored_cmd!r}")
+                            invalid_stored_cmd = True
             except Exception as e:
                 logging.warning(f"Nie udało się wczytać konfiguracji: {e}")
 
         if not self.python_cmd:
             self.python_cmd = self._detect_python()
+
+        if invalid_stored_cmd:
+            # Usuń błędny wpis z config.json, aby nie był sprawdzany przy każdym starcie
+            self.save_config()
 
     def save_config(self):
         try:
@@ -651,15 +693,18 @@ class MkPyEdekGUI(QMainWindow):
         )
 
     def share_to_classroom(self):
-        if not self.current_file:
-            if not self.save_as_file():
-                return
-        self.save_file()
+        # save_file() sam przechodzi do "Zapisz jako", gdy plik jest nowy.
+        # Bez udanego zapisu nie otwieramy Classroom (plik na dysku byłby nieaktualny).
+        if not self.save_file():
+            return
         webbrowser.open("https://classroom.google.com")
         try:
             file_path = os.path.normpath(self.current_file)
             if platform.system() == "Windows":
-                subprocess.Popen(["explorer", f"/select,{file_path}"])
+                # Polecenie jako tekst, nie lista: z listą Popen ujmuje cały argument w cudzysłów
+                # ("/select,C:\...\Jan Kowalski\..."), czego Explorer nie rozumie przy spacjach w ścieżce.
+                # Znak " nie może wystąpić w ścieżce Windows, więc takie cytowanie jest bezpieczne.
+                subprocess.Popen(f'explorer /select,"{file_path}"')
             elif platform.system() == "Darwin":
                 subprocess.Popen(["open", "-R", file_path])
             else:
@@ -701,16 +746,25 @@ class MkPyEdekGUI(QMainWindow):
         msg.exec()
 
         if msg.clickedButton() == btn_locate:
+            # Qt rozdziela wzorce w filtrze spacją (nie średnikiem)
+            if platform.system() == "Windows":
+                py_filter = "Interpreter Python (python*.exe py.exe)"
+            else:
+                py_filter = "Interpreter Python (python python3 python3.*)"
             path, _ = QFileDialog.getOpenFileName(
                 self, "Wskaż interpreter Pythona", "",
-                "Python Executable (*.exe; python; python3);;Wszystkie pliki (*)"
+                f"{py_filter};;Wszystkie pliki (*)"
             )
-            if path and os.path.isfile(path) and os.access(path, os.X_OK):
+            if not path:
+                return
+            if self._is_valid_python(path):
                 self.python_cmd = path
                 self._manual_python_cmd = True
                 self.save_config()
             else:
-                QMessageBox.warning(self, "Błąd", "Wskazany plik nie jest poprawnym plikiem wykonywalnym.")
+                QMessageBox.warning(self, "Błąd",
+                    "Wskazany plik nie jest działającym interpreterem Pythona.\n\n"
+                    "Wskaż plik python.exe (np. C:\\Users\\...\\AppData\\Local\\Programs\\Python\\Python3xx\\python.exe).")
         elif msg.clickedButton() == btn_download:
             webbrowser.open("https://www.python.org/downloads/")
 
@@ -734,11 +788,8 @@ class MkPyEdekGUI(QMainWindow):
             event.ignore()
             return
 
-        # Bezpieczne zatrzymanie debouncera i wątku Jedi przed wyjściem
-        self.editor._debounce.stop()
-        if self.editor._jedi_thread and self.editor._jedi_thread.isRunning():
-            self.editor._jedi_thread.wait(500)
-            
+        # Bezpieczne zatrzymanie autouzupełniania i wątku Jedi przed wyjściem
+        self.editor.shutdown()
         event.accept()
 
     def new_file(self):
@@ -940,4 +991,6 @@ if __name__ == '__main__':
     app.setStyle("Fusion")
     file_path = sys.argv[1] if len(sys.argv) > 1 else None
     win = MkPyEdekGUI(file_to_open=file_path)
+    # Zabezpieczenie także dla wyjścia z pominięciem closeEvent (np. „Zakończ program” w oknie błędu krytycznego)
+    app.aboutToQuit.connect(win.editor.shutdown)
     sys.exit(app.exec())

@@ -37,29 +37,29 @@ if not self.python_cmd:
         return
 ```
 
-**4. Ścieżka `python_cmd` z config.json nie jest sprawdzana.**  
-`os.path.isfile` i `os.access(X_OK)` w Windows przepuszczą każdy istniejący plik. Błędny wpis w konfiguracji daje dokładnie ten objaw, który już raz się pojawił: konsola mignie i zniknie. Proponuję wydzielić `_is_valid_python(path)`, czyli uruchomienie `--version` i sprawdzenie, czy wynik zaczyna się od „Python”. Tej funkcji należy użyć w `load_config`, w „Wskaż plik” i w `_detect_python`. Jeśli zapisana ścieżka okaże się zła, program powinien ją porzucić i wrócić do autodetekcji.
+~~**4. Ścieżka `python_cmd` z config.json nie jest sprawdzana.**  ~~
+~~`os.path.isfile` i `os.access(X_OK)` w Windows przepuszczą każdy istniejący plik. Błędny wpis w konfiguracji daje dokładnie ten objaw, który już raz się pojawił: konsola mignie i zniknie. Proponuję wydzielić `_is_valid_python(path)`, czyli uruchomienie `--version` i sprawdzenie, czy wynik zaczyna się od „Python”. Tej funkcji należy użyć w `load_config`, w „Wskaż plik” i w `_detect_python`. Jeśli zapisana ścieżka okaże się zła, program powinien ją porzucić i wrócić do autodetekcji.~~
 
-**5. Filtr w oknie „Wskaż plik” nie działa.**  
-`"Python Executable (*.exe; python; python3)"`: Qt rozdziela wzorce spacją, nie średnikiem. Wzorzec `*.exe;` zawiera dosłowny średnik, więc pliki .exe nie zostaną pokazane. Poprawny zapis to `"Interpreter Python (python*.exe py.exe)"` w Windows oraz `"(python python3)"` w pozostałych systemach.
+~~**5. Filtr w oknie „Wskaż plik” nie działa.**  ~~
+~~`"Python Executable (*.exe; python; python3)"`: Qt rozdziela wzorce spacją, nie średnikiem. Wzorzec `*.exe;` zawiera dosłowny średnik, więc pliki .exe nie zostaną pokazane. Poprawny zapis to `"Interpreter Python (python*.exe py.exe)"` w Windows oraz `"(python python3)"` w pozostałych systemach.~~
 
-**6. Zamknięcie programu w trakcie pracy Jedi może zakończyć się awarią.**  
-`wait(500)` czeka najwyżej pół sekundy. Pierwsze wywołanie Jedi na większym pliku trwa dłużej, więc obiekt QThread zostaje zniszczony w trakcie działania i pojawia się „QThread: Destroyed while thread is still running”, czyli twarde przerwanie procesu. Należy użyć `wait()` bez limitu. Lepiej też przenieść tę logikę do metody `editor.shutdown()` zamiast sięgać z okna do prywatnych pól `_debounce` i `_jedi_thread`.
+~~**6. Zamknięcie programu w trakcie pracy Jedi może zakończyć się awarią.**  ~~
+~~`wait(500)` czeka najwyżej pół sekundy. Pierwsze wywołanie Jedi na większym pliku trwa dłużej, więc obiekt QThread zostaje zniszczony w trakcie działania i pojawia się „QThread: Destroyed while thread is still running”, czyli twarde przerwanie procesu. Należy użyć `wait()` bez limitu. Lepiej też przenieść tę logikę do metody `editor.shutdown()` zamiast sięgać z okna do prywatnych pól `_debounce` i `_jedi_thread`.~~
 
-**7. „Udostępnij w Classroom” ignoruje wynik zapisu.**  
-Gdy plik jest nowy, zapisuje się dwukrotnie: najpierw w `save_as_file`, potem w `save_file`. Co gorsza, wynik `save_file()` nie jest sprawdzany. Po nieudanym zapisie albo anulowaniu pytania o kodowanie Classroom i tak się otworzy z nieaktualnym plikiem. Cała obsługa sprowadza się do:
+~~**7. „Udostępnij w Classroom” ignoruje wynik zapisu.**  ~~
+~~Gdy plik jest nowy, zapisuje się dwukrotnie: najpierw w `save_as_file`, potem w `save_file`. Co gorsza, wynik `save_file()` nie jest sprawdzany. Po nieudanym zapisie albo anulowaniu pytania o kodowanie Classroom i tak się otworzy z nieaktualnym plikiem. Cała obsługa sprowadza się do:~~
 
-python
+~~python~~
 
 ```python
 if not self.save_file():   # save_file sam przechodzi do save_as
     return
 ```
 
-**8. Explorer nie zaznacza pliku, gdy ścieżka zawiera spacje.**  
-Lista `["explorer", f"/select,{path}"]` zamienia się w `"/select,C:\Users\Jan Kowalski\..."`. Explorer nie rozumie argumentu objętego w całości cudzysłowem i otwiera „Dokumenty”. Działa wersja tekstowa:
+~~**8. Explorer nie zaznacza pliku, gdy ścieżka zawiera spacje.**  ~~
+~~Lista `["explorer", f"/select,{path}"]` zamienia się w `"/select,C:\Users\Jan Kowalski\..."`. Explorer nie rozumie argumentu objętego w całości cudzysłowem i otwiera „Dokumenty”. Działa wersja tekstowa:~~
 
-python
+~~python~~
 
 ```python
 subprocess.Popen(f'explorer /select,"{file_path}"')
