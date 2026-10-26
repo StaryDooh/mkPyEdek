@@ -1,7 +1,8 @@
 ### 🔴 Błędy realne (do poprawy w pierwszej kolejności)
 
 ~~**1. Ctrl+Z po otwarciu pliku przywraca poprzedni plik.**  
-`setText()` i `clear()` nie czyszczą historii cofania w QScintilla. Wystarczy otworzyć plik B i nacisnąć Ctrl+Z, a w oknie pojawi się treść pliku A. Następne Ctrl+S nadpisze wtedy plik B treścią pliku A. To samo dzieje się po „Nowy”.~~
+
+~~`setText()` i `clear()` nie czyszczą historii cofania w QScintilla. Wystarczy otworzyć plik B i nacisnąć Ctrl+Z, a w oknie pojawi się treść pliku A. Następne Ctrl+S nadpisze wtedy plik B treścią pliku A. To samo dzieje się po „Nowy”.~~
 
 ~~python~~
 
@@ -13,7 +14,8 @@ self.editor.SendScintilla(QsciScintilla.SCI_EMPTYUNDOBUFFER)
 ~~To samo trzeba dodać w `new_file()` po `clear()`.~~
 
 ~~**2. Nawiasy zamykające się dublują.**~~  
-Program obsługuje „przeskakiwanie” tylko dla cudzysłowów. Gdy uczeń wpisze ręcznie `print()`, dostanie `print())`. Na lekcjach będzie to najczęstsza skarga.
+
+~~Program obsługuje „przeskakiwanie” tylko dla cudzysłowów. Gdy uczeń wpisze ręcznie `print()`, dostanie `print())`. Na lekcjach będzie to najczęstsza skarga.~~
 
 ~~python~~
 
@@ -26,6 +28,7 @@ if key_text in (')', ']', '}') and not self.hasSelectedText():
 ```
 
 ~~**3. F5 bez wykrytego Pythona pokazuje mylący komunikat.**~~  
+
 ~~Gdy użytkownik wybierze „Ignoruj”, `python_cmd` ma wartość `None`. Wtedy `Popen([None, ...])` rzuca `TypeError`, a uczeń widzi komunikat „Nie uruchomiono interpretera: expected str…”. Na początku `run_code` warto dodać:~~
 
 ~~python~~
@@ -37,16 +40,20 @@ if not self.python_cmd:
         return
 ```
 
-~~**4. Ścieżka `python_cmd` z config.json nie jest sprawdzana.**  ~~
+~~**4. Ścieżka `python_cmd` z config.json nie jest sprawdzana.**~~
+
 ~~`os.path.isfile` i `os.access(X_OK)` w Windows przepuszczą każdy istniejący plik. Błędny wpis w konfiguracji daje dokładnie ten objaw, który już raz się pojawił: konsola mignie i zniknie. Proponuję wydzielić `_is_valid_python(path)`, czyli uruchomienie `--version` i sprawdzenie, czy wynik zaczyna się od „Python”. Tej funkcji należy użyć w `load_config`, w „Wskaż plik” i w `_detect_python`. Jeśli zapisana ścieżka okaże się zła, program powinien ją porzucić i wrócić do autodetekcji.~~
 
-~~**5. Filtr w oknie „Wskaż plik” nie działa.**  ~~
+~~**5. Filtr w oknie „Wskaż plik” nie działa.**~~
+
 ~~`"Python Executable (*.exe; python; python3)"`: Qt rozdziela wzorce spacją, nie średnikiem. Wzorzec `*.exe;` zawiera dosłowny średnik, więc pliki .exe nie zostaną pokazane. Poprawny zapis to `"Interpreter Python (python*.exe py.exe)"` w Windows oraz `"(python python3)"` w pozostałych systemach.~~
 
-~~**6. Zamknięcie programu w trakcie pracy Jedi może zakończyć się awarią.**  ~~
+~~**6. Zamknięcie programu w trakcie pracy Jedi może zakończyć się awarią.**~~
+
 ~~`wait(500)` czeka najwyżej pół sekundy. Pierwsze wywołanie Jedi na większym pliku trwa dłużej, więc obiekt QThread zostaje zniszczony w trakcie działania i pojawia się „QThread: Destroyed while thread is still running”, czyli twarde przerwanie procesu. Należy użyć `wait()` bez limitu. Lepiej też przenieść tę logikę do metody `editor.shutdown()` zamiast sięgać z okna do prywatnych pól `_debounce` i `_jedi_thread`.~~
 
-~~**7. „Udostępnij w Classroom” ignoruje wynik zapisu.**  ~~
+~~**7. „Udostępnij w Classroom” ignoruje wynik zapisu.**~~
+
 ~~Gdy plik jest nowy, zapisuje się dwukrotnie: najpierw w `save_as_file`, potem w `save_file`. Co gorsza, wynik `save_file()` nie jest sprawdzany. Po nieudanym zapisie albo anulowaniu pytania o kodowanie Classroom i tak się otworzy z nieaktualnym plikiem. Cała obsługa sprowadza się do:~~
 
 ~~python~~
@@ -56,7 +63,8 @@ if not self.save_file():   # save_file sam przechodzi do save_as
     return
 ```
 
-~~**8. Explorer nie zaznacza pliku, gdy ścieżka zawiera spacje.**  ~~
+~~**8. Explorer nie zaznacza pliku, gdy ścieżka zawiera spacje.**~~
+
 ~~Lista `["explorer", f"/select,{path}"]` zamienia się w `"/select,C:\Users\Jan Kowalski\..."`. Explorer nie rozumie argumentu objętego w całości cudzysłowem i otwiera „Dokumenty”. Działa wersja tekstowa:~~
 
 ~~python~~
@@ -65,45 +73,47 @@ if not self.save_file():   # save_file sam przechodzi do save_as
 subprocess.Popen(f'explorer /select,"{file_path}"')
 ```
 
-**9. Część kodu źle wygląda w ciemnych motywach.**  
-Pętla kolorów obejmuje tylko 12 stylów. Dekoratory, f-stringi (`DoubleQuotedFString` i pokrewne), `CommentBlock` i `UnclosedString` zachowują domyślne kolory leksera, często ciemne na ciemnym tle. Mają też inną czcionkę, bo `setDefaultFont` nie zmienia już istniejących stylów. Przed pętlą wystarczy ustawić bazę dla wszystkich stylów:
+~~**9. Część kodu źle wygląda w ciemnych motywach.**~~
 
-python
+~~Pętla kolorów obejmuje tylko 12 stylów. Dekoratory, f-stringi (`DoubleQuotedFString` i pokrewne), `CommentBlock` i `UnclosedString` zachowują domyślne kolory leksera, często ciemne na ciemnym tle. Mają też inną czcionkę, bo `setDefaultFont` nie zmienia już istniejących stylów. Przed pętlą wystarczy ustawić bazę dla wszystkich stylów:~~
+
+~~python~~
 
 ```python
 lexer.setColor(fg); lexer.setFont(font); lexer.setPaper(bg)
 ```
-
-Potem warto dopisać brakujące style do słownika.
-
 ### 🟠 Nieścisłości i błędy brzegowe
 
-**10. Mieszane końce linii.** Edytor wymusza `EolUnix`, ale plik z `\r\n` jest wczytywany bez zmian, a zapis z `newline=''` zachowuje mieszankę. Po wczytaniu warto wykryć styl: jeśli plik zawiera `'\r\n'`, ustawić `setEolMode(EolWindows)`.
+~~**10. Mieszane końce linii.**~~
 
-**11. Wykrywanie kodowania:**
+~~Odczyt bez `newline=''` zamieniał `\r\n` na `\n`, więc pliki CRLF były po cichu konwertowane na LF przy zapisie.~~
 
--   Plik UTF-8 z BOM wczyta się z niewidocznym `\ufeff`, a `compile()` zgłosi błąd składni w linii 1. Na pierwszej pozycji listy powinno być `'utf-8-sig'`.
--   `cp1250` dekoduje prawie każdy ciąg bajtów, a `latin-2` dekoduje każdy. Gałąź `if content is None` jest więc martwym kodem.
--   Deklaracja `# -*- coding: ... -*-` (PEP 263) jest ignorowana.
+**11. Wykrywanie kodowania:** *(opis poprawiony – dwa pierwsze pierwotne podpunkty były błędne)*
 
-**12. Zaznaczenie linii z błędem.** `lineLength()` zwraca liczbę **bajtów** razem ze znakiem końca linii, a `setSelection` oczekuje znaków. Przy polskich znakach zaznaczenie wychodzi poza linię. Należy użyć `len(self.editor.text(line).rstrip('\r\n'))`. Przy okazji można ustawić kursor na `e.offset`, czyli dokładnie w miejscu błędu.
+-   🆕 🔴 **Kodek `'latin-2'` nie istnieje w Pythonie** (poprawne nazwy: `'latin2'`, `'iso-8859-2'`). Pętla łapie `LookupError` i po cichu go pomija. Plik z bajtami nieznanymi w CP1250 (np. `0x81`, `0x83`, `0x98`) trafia więc do gałęzi `errors='replace'`: znaki zamieniają się na `�`, a `_original_encoding` ustawia się na `'utf-8'`, więc **przy zapisie nie pada pytanie o zmianę kodowania i oryginalne bajty zostają bezpowrotnie utracone**. Gałąź `if content is None` nie jest więc martwym kodem, jak napisano wcześniej – jest osiągalna i niszczy dane. Poprawka: `'iso-8859-2'` w miejsce `'latin-2'` (wtedy gałąź awaryjna faktycznie stanie się martwa i można ją uprościć).
+-   🆕 🟠 **Deklaracja `# -*- coding: cp1250 -*-` zostaje w pliku po konwersji do UTF-8.** Edytor zapisuje plik w UTF-8, ale Python przy uruchomieniu (F5) czyta go zgodnie z deklaracją jako CP1250 – test: `print("żółw")` wypisuje `ĹĽĂłĹ‚w`. `compile()` w edytorze tego nie wykrywa, bo dostaje gotowy tekst. Przy zapisie w UTF-8 należy usunąć lub zamienić deklarację w pierwszych dwóch liniach (albo uwzględniać ją przy odczycie – PEP 263).
+-   ~~Plik UTF-8 z BOM wczyta się z niewidocznym znakiem BOM, a `compile()` zgłosi błąd składni w linii 1.~~ – **nieaktualne:** QScintilla usuwa BOM przy `setText()`, `compile()` działa poprawnie. Skutek uboczny: BOM znika z pliku po zapisie (zwykle nieszkodliwe, dla Pythona wręcz korzystne). Można zostawić.
 
-**13. „Zamień” działa niespójnie.**
+**12. Zaznaczenie linii z błędem.** *(potwierdzone)* `lineLength()` zwraca liczbę **bajtów** razem ze znakiem końca linii, a `setSelection` oczekuje znaków. Test: linia `print('żółć gęś') x` ma 19 znaków, a `lineLength()` zwraca 26. Od 1.0.7.0 w plikach CRLF dochodzą jeszcze 2 znaki końca linii zamiast 1. Należy użyć `len(self.editor.text(line).rstrip('\r\n'))`. Przy okazji można ustawić kursor na `e.offset`, czyli dokładnie w miejscu błędu.
+*(Sprawdzone przy okazji: `getCursorPosition()` zwraca indeks w znakach, nie w bajtach, więc przeskakiwanie nawiasów z punktu 2 i `get_word_before_cursor` działają poprawnie z polskimi znakami.)*
 
--   `findFirst(..., cs=False)` szuka bez rozróżniania wielkości liter, a `str.replace` przy „zamień wszystko” ją rozróżnia. Liczba trafień i zamian może się więc różnić.
+**13. „Zamień” i „Znajdź następny” działają niespójnie.** *(potwierdzone, rozszerzone)*
+
+-   `findFirst(..., cs=False)` szuka bez rozróżniania wielkości liter, a `str.replace` przy „zamień wszystko” ją rozróżnia. Test: w tekście `Ala ala ALA` wyszukiwanie znajduje 3 trafienia, a „zamień wszystko” zamieni 1.
 -   „Zamień wszystko” podmienia cały tekst, przez co kursor i przewinięcie lądują na początku pliku.
--   F3 po końcu wyników niczego nie komunikuje.
+-   🆕 **F3 szuka nie tego, co trzeba.** `find_next_text` sprawdza `self.last_search`, ale wywołuje `findNext()`, które powtarza **ostatnie wywołanie `findFirst`**. „Zamień wszystko” ustawia `last_search`, ale nie woła `findFirst`, więc F3 szuka poprzedniego wyrażenia (test: po zamianie dla „szukaj” F3 znalazł „y” z wcześniejszego „Znajdź”). Gdy `findFirst` nie było wołane wcale, F3 nic nie robi. Poprawka: w F3 wołać `findFirst(self.last_search, ...)` od pozycji kursora.
+-   F3 nie informuje, gdy nic nie znaleziono (przy `wrap=True` wyniki się zapętlają, ale brak trafień jest cichy).
 
-**14. Limit długości kodu w Gmailu.** Limit 1500 znaków jest liczony na surowym kodzie. Po kodowaniu URL polska litera zajmuje 6 znaków, a cały adres jest kodowany jeszcze raz w `continue=`. Należy mierzyć `len(urllib.parse.quote(code))`. Endpoint `AccountChooser` jest nieudokumentowany i może przestać działać bez ostrzeżenia.
+**14. Limit długości kodu w Gmailu.** *(potwierdzone)* Limit 1500 znaków jest liczony na surowym kodzie. Po kodowaniu URL polska litera zajmuje 6 znaków, a cały adres jest kodowany jeszcze raz w `continue=`. Test: kod z polskimi znakami o długości 1620 znaków daje treść 5160 znaków po kodowaniu i adres URL o długości 8282 znaków. Należy mierzyć `len(urllib.parse.quote(code))`. Endpoint `AccountChooser` jest nieudokumentowany i może przestać działać bez ostrzeżenia. Od 1.0.7.0 pliki CRLF dodają po 6 znaków (`%0D%0A`) na każdą linię.
 
-**15. Uruchamianie przez `runpy` różni się od zwykłego `python plik.py`.**
+**15. Uruchamianie przez `runpy` różni się od zwykłego `python plik.py`.** *(bez zmian – kod uruchamiania nie był modyfikowany)*
 
 -   `multiprocessing` w Windows (spawn) i `pickle` klas z `__main__` mogą nie działać.
 -   Gdy skrypt zamknie stdin, `input()` w `finally` rzuci `EOFError`.
 -   W systemach macOS i Linux skrypt startuje bez runnera, więc zachowanie zależy od systemu. Do drobnych zadań szkolnych to wystarcza, ale warto o tym pamiętać.
 
-**16. Autouzupełnianie nie zna bibliotek ucznia.**  
-`jedi.Script(source)` dostaje kod bez `path` i bez `environment`. W zbudowanym .exe Jedi zna tylko to, co spakowano do programu, więc `pygame` czy `numpy` z Pythona ucznia nie będą podpowiadane. Importy względne też nie zadziałają. Rozwiązanie:
+**16. Autouzupełnianie nie zna bibliotek ucznia.** *(bez zmian)*  
+`jedi.Script(source)` dostaje kod bez `path` i bez `environment`. W zbudowanym .exe Jedi zna tylko to, co spakowano do programu, więc `pygame` czy `numpy` z Pythona ucznia nie będą podpowiadane. Importy względne też nie zadziałają. Od 1.0.6.6 `python_cmd` jest zawsze sprawdzonym interpreterem, więc można go bezpiecznie użyć do `create_environment`. Rozwiązanie (wątek Jedi musi dostać też `current_file`):
 
 python
 
@@ -112,20 +122,23 @@ env = jedi.create_environment(python_cmd, safe=False)   # utworzyć raz i zachow
 jedi.Script(source, path=current_file, environment=env)
 ```
 
-**17. Autouzupełnianie bywa nachalne.**
+**17. Autouzupełnianie bywa nachalne.** *(potwierdzone testem)*
 
--   Lista podpowiedzi wyskakuje także w komentarzach i napisach.
--   Wpisanie `3.` pokazuje metody typu float.
--   Auto-cudzysłów psuje `don't` w komentarzu.
--   Potrójne `"""` daje `"""|"`.
+-   Lista podpowiedzi wyskakuje także w komentarzach i napisach (wpisanie `# ab` uruchamia Jedi).
+-   Wpisanie `3.` uruchamia podpowiedzi (metody typu float).
+-   Auto-cudzysłów psuje `don't` w komentarzu – wynik: `# don't'`.
+-   Potrójne `"""` daje `""""` (kursor przed ostatnim cudzysłowem).
+-   Nawiasy w komentarzach działają poprawnie – przeskakiwanie z punktu 2 nie powoduje tu problemów.
 
 Warto sprawdzać styl pod kursorem (`SCI_GETSTYLEAT`) i nie parować ani nie podpowiadać wewnątrz komentarzy i napisów.
 
-**18. Plik podany w linii poleceń albo z listy ostatnich, który nie istnieje,** jest pomijany bez żadnego komunikatu.
+**18. Plik podany w linii poleceń albo z listy ostatnich, który nie istnieje,** jest pomijany bez żadnego komunikatu. *(potwierdzone testem – 0 komunikatów; plik jest tylko usuwany z listy ostatnich)*
 
 ### 🟡 Bezpieczeństwo i odporność
 
--   **`shutil.which` w Windows przeszukuje najpierw bieżący katalog.** W pracowni ktoś może podrzucić `python.exe` do folderu, z którego startuje edytor. Bezpieczniej szukać wyłącznie w `PATH` albo odrzucać trafienia z `os.getcwd()`.
+*(cała sekcja bez zmian – żadna z poprawek jej nie dotyczyła)*
+
+-   **`shutil.which` w Windows przeszukuje najpierw bieżący katalog.** W pracowni ktoś może podrzucić `python.exe` do folderu, z którego startuje edytor. Bezpieczniej szukać wyłącznie w `PATH` albo odrzucać trafienia z `os.getcwd()`. Walidacja z 1.0.6.6 (`_is_valid_python`) tego nie rozwiązuje – podrzucony plik wystarczy, że wypisze tekst zaczynający się od „Python”.
 -   **Zapis nie jest atomowy** ani dla pliku z kodem, ani dla config.json. Awaria w trakcie zapisu może zniszczyć plik. Bezpieczniejszy wzorzec to zapis do `plik.tmp`, a potem `os.replace()`. Uszkodzony config.json jest dziś po cichu nadpisywany wartościami domyślnymi, więc lista ostatnich plików znika.
 -   **Log rośnie bez końca** (`filemode='a'`). Lepiej użyć `RotatingFileHandler`.
 -   **Kod wysyłany przez Gmail trafia w całości do adresu URL,** a więc do historii przeglądarki.
@@ -138,8 +151,12 @@ Warto sprawdzać styl pod kursorem (`SCI_GETSTYLEAT`) i nie parować ani nie pod
 -   Motyw edytora jest nakładany dwa razy przy starcie: w `PythonEditor.__init__` i w `change_theme`. Do tego `change_theme` zapisuje config przy każdym uruchomieniu programu.
 -   Nawiasy w `key_text == '.' or (key_text.isalnum() or ...)` są zbędne.
 -   Lepiej przekazywać `line` i `index` w sygnale `result_ready` niż odczytywać je przez `self.sender()`.
--   `_detect_python` przy starcie może blokować GUI nawet przez 3 × 5 s.
+-   `_detect_python` przy starcie może blokować GUI nawet przez 3 × 5 s. *(od 1.0.6.6 dochodzi jedno sprawdzenie `--version` dla ścieżki zapisanej w config.json – zwykle kilkadziesiąt ms)*
 -   `except Exception` w `resource_path` lepiej zawęzić do `AttributeError`.
 -   Na liście ostatnich plików dwa pliki `main.py` z różnych folderów są nie do odróżnienia. Warto dodać tooltip z pełną ścieżką.
+-   🆕 Komunikat „Plik zawiera znaki spoza UTF-8…” w gałęzi awaryjnej odczytu jest mylący (plik zwykle jest w innym kodowaniu, a nie „zawiera znaki spoza UTF-8”) – do poprawienia razem z punktem 11.
+-   🆕 CHANGELOG, wpis 1.0.4.3, opisuje lekser „przydzielany w sposób trwały”, ale do 1.0.6.11 był on usuwany po każdej zmianie motywu – opis odpowiada stanowi faktycznemu dopiero od 1.0.6.11.
+
+*(Wszystkie pozostałe pozycje tej sekcji sprawdzone na 1.0.7.0 – nadal aktualne.)*
 
 Wrapper `select_all` **nie jest** nadmiarowy i powinien zostać. Sygnał `triggered` przekazuje `checked=False`, więc bezpośrednie podpięcie `editor.selectAll` odznaczałoby tekst zamiast go zaznaczać.

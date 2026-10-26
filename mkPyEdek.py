@@ -187,7 +187,9 @@ class PythonEditor(QsciScintilla):
 
         lexer = self.lexer()
         if not isinstance(lexer, QsciLexerPython):
-            lexer = QsciLexerPython()
+            # Rodzic = edytor: bez niego Python usuwa lekser po wyjściu z metody,
+            # a każda zmiana motywu tworzyłaby nowy lekser od zera.
+            lexer = QsciLexerPython(self)
             lexer.setDefaultFont(font)
             self.setLexer(lexer)
         else:
@@ -195,6 +197,11 @@ class PythonEditor(QsciScintilla):
 
         lexer.setDefaultPaper(bg)
         lexer.setDefaultColor(fg)
+
+        # Baza dla WSZYSTKICH stylów leksera (bez numeru stylu = wszystkie).
+        # Style nieujęte w słowniku poniżej nie zachowają domyślnych kolorów/czcionek QScintilli.
+        lexer.setColor(fg)
+        lexer.setFont(font)
         lexer.setPaper(bg)
 
         styles = {
@@ -209,7 +216,16 @@ class PythonEditor(QsciScintilla):
             QsciLexerPython.ClassName: (class_col, font_bold),
             QsciLexerPython.FunctionMethodName: (func_col, font_bold),
             QsciLexerPython.Operator: (fg, font),
-            QsciLexerPython.Identifier: (var_col, font_bold)
+            QsciLexerPython.Identifier: (var_col, font_bold),
+            # Style wcześniej pomijane (zostawały z domyślnymi kolorami leksera)
+            QsciLexerPython.CommentBlock: (comment_col, font),            # komentarz "##"
+            QsciLexerPython.UnclosedString: (string_col, font),           # niezamknięty napis
+            QsciLexerPython.HighlightedIdentifier: (var_col, font_bold),
+            QsciLexerPython.Decorator: (func_col, font),                  # @dekorator
+            QsciLexerPython.DoubleQuotedFString: (string_col, font),      # f"..."
+            QsciLexerPython.SingleQuotedFString: (string_col, font),      # f'...'
+            QsciLexerPython.TripleSingleQuotedFString: (string_col, font),
+            QsciLexerPython.TripleDoubleQuotedFString: (string_col, font),
         }
 
         for style, (color, st_font) in styles.items():
@@ -371,7 +387,7 @@ class PythonEditor(QsciScintilla):
 # GŁÓWNA KLASA APLIKACJI
 # ─────────────────────────────────────────────────────────────────────────────
 class MkPyEdekGUI(QMainWindow):
-    VERSION = "1.0.6.10"
+    VERSION = "1.0.7.0"
 
     def __init__(self, file_to_open=None):
         super().__init__()
@@ -795,6 +811,8 @@ class MkPyEdekGUI(QMainWindow):
     def new_file(self):
         if self.maybe_save():
             self.editor.clear()
+            # Nowy plik zawsze z końcami linii LF (styl poprzedniego pliku nie jest dziedziczony)
+            self.editor.setEolMode(QsciScintilla.EolMode.EolUnix)
             # Wyczyść historię cofania, aby Ctrl+Z nie przywracał poprzedniego pliku
             self.editor.SendScintilla(QsciScintilla.SCI_EMPTYUNDOBUFFER)
             self.current_file = None
@@ -819,7 +837,8 @@ class MkPyEdekGUI(QMainWindow):
                 detected_enc = 'utf-8'
                 for enc in ('utf-8', 'cp1250', 'latin-2'):
                     try:
-                        with open(file_path, 'r', encoding=enc) as f:
+                        # newline='' – wczytaj końce linii bez zmian, aby wykryć styl (CRLF/LF)
+                        with open(file_path, 'r', encoding=enc, newline='') as f:
                             content = f.read()
                         detected_enc = enc
                         break
@@ -827,7 +846,7 @@ class MkPyEdekGUI(QMainWindow):
                         continue
 
                 if content is None:
-                    with open(file_path, 'r', encoding='utf-8', errors='replace') as f:
+                    with open(file_path, 'r', encoding='utf-8', errors='replace', newline='') as f:
                         content = f.read()
                     detected_enc = 'utf-8'
                     QMessageBox.warning(self, "Kodowanie",
@@ -836,6 +855,12 @@ class MkPyEdekGUI(QMainWindow):
                 self._original_encoding = detected_enc
 
                 self.editor.setText(content)
+                # Zachowaj styl końców linii pliku: CRLF (Windows), jeśli występuje, inaczej LF.
+                # convertEols ujednolica ewentualną mieszankę, a nowe linie (Enter) dostają ten sam styl.
+                eol_mode = (QsciScintilla.EolMode.EolWindows if '\r\n' in content
+                            else QsciScintilla.EolMode.EolUnix)
+                self.editor.setEolMode(eol_mode)
+                self.editor.convertEols(eol_mode)
                 # Wyczyść historię cofania, aby Ctrl+Z nie przywracał poprzedniego pliku
                 self.editor.SendScintilla(QsciScintilla.SCI_EMPTYUNDOBUFFER)
                 self.current_file = file_path

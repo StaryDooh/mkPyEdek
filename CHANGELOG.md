@@ -2,6 +2,24 @@
 
 ---
 
+## [1.0.7.0]
+
+### Naprawione (Fixed)
+- **Zachowanie końców linii (CRLF/LF):** Pliki zapisane z końcami linii Windows (`\r\n`) zachowują je po zapisie. Wcześniej plik był wczytywany z automatyczną zamianą `\r\n` na `\n`, przez co po pierwszym zapisie końce linii były po cichu zmieniane na uniksowe.
+- **Ujednolicanie mieszanych końców linii:** Plik zawierający zarówno `\r\n`, jak i `\n` jest po otwarciu ujednolicany do stylu Windows; nowe linie wstawiane klawiszem Enter mają ten sam styl co reszta pliku. Konwersja nie oznacza pliku jako zmienionego i nie trafia do historii cofania.
+- **Nowy plik:** Polecenie „Nowy” zawsze przywraca końce linii LF, niezależnie od stylu poprzednio otwartego pliku.
+
+---
+
+## [1.0.6.11]
+
+### Naprawione (Fixed)
+- **Kolorowanie składni w motywach:** Motyw ustawia teraz wszystkie 20 stylów leksera Pythona (wcześniej 12). Dekoratory (`@...`), f-stringi (`f"..."`, `f'...'`, `f"""..."""`), bloki komentarzy (`##`) oraz niezamknięte napisy otrzymują kolory i czcionkę aktywnego motywu – w ciemnych motywach nie są już ciemne na ciemnym tle.
+- **Wspólna baza stylów:** Przed nadaniem kolorów poszczególnym elementom ustawiany jest kolor, tło i czcionka dla wszystkich stylów, więc żaden styl nie zachowuje domyślnych ustawień QScintilli.
+- **Trwały lekser:** Lekser składni jest tworzony z edytorem jako rodzicem. Wcześniej był usuwany przez mechanizm odśmiecania Pythona zaraz po ustawieniu motywu, przez co każda zmiana motywu tworzyła nowy lekser od zera.
+
+---
+
 ## [1.0.6.10]
 
 ### Naprawione (Fixed)
