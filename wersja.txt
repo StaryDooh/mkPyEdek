@@ -2,8 +2,8 @@
 VSVersionInfo(
   ffi=FixedFileInfo(
     # Wersja pliku i produktu (musi składać się z 4 liczb oddzielonych przecinkami)
-    filevers=(1, 0, 7, 0),
-    prodvers=(1, 0, 7, 0),
+    filevers=(1, 0, 8, 0),
+    prodvers=(1, 0, 8, 0),
     mask=0x3f,
     flags=0x0,
     OS=0x40004,
@@ -18,12 +18,12 @@ VSVersionInfo(
         u'041504b0', # Kod 0415 oznacza język polski
         [StringStruct(u'CompanyName', u'Krzysztof Markowski'),
         StringStruct(u'FileDescription', u'Prosty edytor języka Python'),
-        StringStruct(u'FileVersion', u'1.0.7.0'),
+        StringStruct(u'FileVersion', u'1.0.8.0'),
         StringStruct(u'InternalName', u'mkPyEdek'),
         StringStruct(u'LegalCopyright', u'Krzysztof Markowski'),
         StringStruct(u'OriginalFilename', u'mkPyEdek.exe'),
         StringStruct(u'ProductName', u'mkPyEdek'),
-        StringStruct(u'ProductVersion', u'1.0.7.0')])
+        StringStruct(u'ProductVersion', u'1.0.8.0')])
       ]), 
     VarFileInfo([VarStruct(u'Translation', [1045, 1200])]) # 1045 to kod języka polskiego
   ]

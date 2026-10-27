@@ -2,6 +2,94 @@
 
 ---
 
+## [1.0.8.0]
+
+### Naprawione (Fixed)
+- **Brakujący plik:** Próba otwarcia nieistniejącego pliku (z listy „Otwórz ostatnie”, z linii poleceń lub przez „Otwórz za pomocą…”) wyświetla komunikat z pełną ścieżką pliku. Wcześniej program nie reagował w żaden widoczny sposób, a plik był po cichu usuwany z listy ostatnich.
+- **Lista ostatnich plików:** Wybranie pliku, który już nie istnieje, nie wywołuje zbędnego pytania o zapis bieżących zmian – od razu pojawia się informacja o braku pliku i o usunięciu go z listy.
+
+---
+
+## [1.0.7.7]
+
+### Zmienione (Changed)
+- **Mniej nachalne podpowiedzi:** Lista podpowiedzi nie pojawia się automatycznie w komentarzach i napisach (wewnątrz `{…}` w f-stringach nadal działa); `Ctrl+Spacja` wywołuje ją zawsze. Kropka w liczbie (np. `3.`) nie otwiera listy metod typu float.
+
+### Naprawione (Fixed)
+- **Cudzysłowy w komentarzach i napisach:** Apostrof nie jest już dublowany – `# don't` i `"Ala's kot"` wpisują się poprawnie. W kodzie cudzysłów po literze nie jest parowany, z wyjątkiem prefiksów napisów (`f"`, `r'`, `b"`, `rb'` itp.).
+- **Potrójny cudzysłów:** Wpisanie `"""` (lub `'''`) wstawia od razu zamknięcie – `"""|"""` – zamiast `""""`.
+
+---
+
+## [1.0.7.6]
+
+### Dodane (Added)
+- **Podpowiedzi z bibliotek ucznia:** Autouzupełnianie korzysta z zainstalowanego interpretera Pythona, więc podpowiada także biblioteki doinstalowane przez ucznia (np. `pygame`, `numpy`), a nie tylko moduły wbudowane w program.
+- **Podpowiedzi z własnych modułów:** Działają importy modułów leżących w tym samym folderze co edytowany plik (np. `import moj_modul`).
+
+### Zmienione (Changed)
+- Środowisko autouzupełniania jest tworzone przy pierwszej podpowiedzi (w tle) i zapamiętywane; zmiana interpretera przez „Wskaż plik” je odświeża.
+- Jeśli środowiska nie da się uruchomić, autouzupełnianie automatycznie wraca do bibliotek wbudowanych, a przyczyna jest zapisywana w `app.log`.
+- Budowanie: do paczki dołączane są pliki źródłowe pakietów `jedi` i `parso` (wymagane przez proces pomocniczy autouzupełniania).
+
+---
+
+## [1.0.7.5]
+
+### Naprawione (Fixed)
+- **Okno konsoli po zakończeniu programu (F5):** Okno nie zamyka się już natychmiast, gdy uruchomiony program zamknie lub wyczerpie standardowe wejście (np. `sys.stdin.close()`). Edytor czeka wtedy na dowolny klawisz bezpośrednio z konsoli Windows, dzięki czemu wynik programu i ewentualny komunikat błędu pozostają widoczne.
+- **Ctrl+C przy „Naciśnij Enter, aby zamknąć…”** zamyka okno bez wyświetlania zbędnego komunikatu błędu.
+
+--- 
+
+## [1.0.7.4]
+
+### Zmienione (Changed)
+- **Wysyłanie kodu przez Gmail:** Długość kodu jest sprawdzana na gotowym adresie wiadomości (po zakodowaniu znaków), a nie na surowym tekście – wcześniej kod z polskimi znakami mieszczący się w limicie 1500 znaków dawał adres kilkukrotnie dłuższy. Krótki kod trafia do treści wiadomości bez żadnych ostrzeżeń.
+- **Długi kod jako załącznik:** Gdy kod jest zbyt długi, program wyświetla ostrzeżenie z prośbą o wysłanie go jako załącznika (plik `.py`). Po potwierdzeniu zapisuje plik, otwiera nową wiadomość w Gmailu z informacją o załączniku i pokazuje plik w folderze, gotowy do dołączenia. Usunięto dotychczasowe kopiowanie długiego kodu do schowka.
+- Temat wiadomości zawiera nazwę pliku (np. „Kod programu Python - zadanie.py”), jeśli plik był zapisany.
+- Kod otwierający folder z zaznaczonym plikiem został wydzielony do wspólnej metody używanej przez Gmail i Classroom.
+
+---
+
+## [1.0.7.3]
+
+### Naprawione (Fixed)
+- **Spójne wyszukiwanie i zamiana:** „Znajdź”, „Znajdź następny” (F3) i „Zamień” jednakowo rozróżniają wielkość liter (jak Python). Wcześniej wyszukiwanie ignorowało wielkość liter, a „Zamień wszystko” ją uwzględniało – liczba trafień i zamian mogła się różnić.
+- **F3 szukał niewłaściwego tekstu:** „Znajdź następny” zawsze szuka ostatnio wpisanego wyrażenia od pozycji kursora. Wcześniej po „Zamień wszystko” powtarzał poprzednie wyszukiwanie, a bez wcześniejszego „Znajdź” nie robił nic.
+- **Komunikaty F3:** Brak trafień wyświetla komunikat, a powrót wyszukiwania na początek pliku jest sygnalizowany na pasku stanu.
+- **„Zamień wszystko” zachowuje widok:** Kursor i przewinięcie pozostają na swoim miejscu zamiast przeskakiwać na początek pliku; całą operację nadal cofa jedno Ctrl+Z.
+
+### Zmienione (Changed)
+- Okna „Znajdź” i „Zamień” podpowiadają ostatnio szukany tekst; komunikaty podają szukaną frazę.
+- Poprawna odmiana w komunikacie o liczbie zamian (np. „Zamieniono 3 wystąpienia”).
+- Zachowanie wielkości liter można zmienić jedną stałą `SEARCH_CASE_SENSITIVE`.
+
+---
+
+## [1.0.7.2]
+
+### Naprawione (Fixed)
+- **Wskazywanie błędu składni (F5):** Zaznaczenie obejmuje dokładnie tekst błędnej linii. Wcześniej długość linii była liczona w bajtach razem ze znakiem końca linii, przez co zaznaczenie wychodziło poza linię (zwłaszcza przy polskich znakach i w plikach CRLF), a kursor lądował na początku następnej linii.
+- **Kursor w miejscu błędu:** Po zamknięciu komunikatu kursor ustawia się dokładnie w miejscu wskazanym przez Pythona (kolumna błędu), a edytor otrzymuje fokus – można od razu poprawiać kod.
+
+### Zmienione (Changed)
+- Komunikat o błędzie składni podaje także numer kolumny (np. „Błąd w linii 2, kolumna 19”). Obsługa błędu została wydzielona do metody `_show_syntax_error()`; numery linii i kolumn spoza zakresu tekstu są bezpiecznie przycinane.
+
+---
+
+## [1.0.7.1]
+
+### Naprawione (Fixed)
+- **Utrata danych przy nietypowym kodowaniu:** Zastąpiono nieistniejący w Pythonie kodek `latin-2` poprawnym `iso-8859-2`. Wcześniej pliki zawierające bajty nieobsługiwane przez Windows-1250 były wczytywane ze znakami zastępczymi `�` i oznaczane jako UTF-8 – przy zapisie, bez żadnego pytania, oryginalne znaki były bezpowrotnie tracone. Teraz każdy plik wczytuje się bez strat, a przed zapisem w UTF-8 pada standardowe pytanie o zmianę kodowania.
+- **Deklaracja kodowania (PEP 263):** Przy zapisie deklaracja kodowania innego niż UTF-8 w pierwszych dwóch liniach (np. `# -*- coding: cp1250 -*-`) jest zamieniana na `utf-8`. Wcześniej plik zapisany w UTF-8 z pozostawioną deklaracją CP1250 wyświetlał po uruchomieniu (F5) polskie znaki jako „krzaczki”. Poprawka naprawia też pliki przekonwertowane przez starsze wersje edytora; zmianę można cofnąć skrótem Ctrl+Z.
+- **Pytanie o kodowanie po błędzie zapisu:** Informacja o oryginalnym kodowaniu pliku jest kasowana dopiero po udanym zapisie.
+
+### Zmienione (Changed)
+- Usunięto gałąź awaryjnego odczytu z `errors='replace'` oraz mylący komunikat „Plik zawiera znaki spoza UTF-8”.
+
+---
+
 ## [1.0.7.0]
 
 ### Naprawione (Fixed)

@@ -1,5 +1,7 @@
 import sys
 import os
+import re
+import codecs
 import subprocess
 import jedi
 import webbrowser
@@ -108,20 +110,80 @@ def resource_path(relative_path):
 # ─────────────────────────────────────────────────────────────────────────────
 # Autouzupełnianie Jedi w tle (QThread) - pobiera listę w tle
 # ─────────────────────────────────────────────────────────────────────────────
+class JediEnvironmentProvider:
+    """Środowisko Jedi oparte na interpreterze Pythona ucznia (python_cmd).
+
+    Dzięki niemu podpowiedzi obejmują biblioteki zainstalowane przez ucznia (np. pygame, numpy),
+    a nie tylko to, co spakowano do mkPyEdek.exe. Środowisko jest tworzone leniwie (w wątku Jedi,
+    przy pierwszej podpowiedzi) i zapamiętywane. Jeśli nie da się go uruchomić – np. w .exe brakuje
+    plików źródłowych jedi/parso albo Jedi nie obsługuje danej wersji Pythona – provider przełącza się
+    na dotychczasowe działanie (środowisko wbudowane) i nie próbuje ponownie aż do zmiany interpretera.
+    """
+
+    def __init__(self):
+        self._lock = threading.Lock()
+        self._python_cmd = None
+        self._env = None
+        self._failed = False
+
+    def set_python_cmd(self, python_cmd):
+        with self._lock:
+            if python_cmd != self._python_cmd:
+                self._python_cmd = python_cmd
+                self._env = None
+                self._failed = False
+
+    def get(self):
+        """Zwraca środowisko albo None (= środowisko wbudowane). Wywoływane z wątku Jedi."""
+        with self._lock:
+            if self._failed or not self._python_cmd:
+                return None
+            if self._env is None:
+                try:
+                    self._env = jedi.create_environment(self._python_cmd, safe=False)
+                except Exception as e:
+                    logging.warning(f"Jedi: nie można użyć interpretera {self._python_cmd!r} – "
+                                    f"podpowiedzi tylko z bibliotek wbudowanych: {e}")
+                    self._failed = True
+                    return None
+            return self._env
+
+    def mark_broken(self, env, error):
+        with self._lock:
+            if self._env is env and env is not None:
+                logging.warning(f"Jedi: środowisko {self._python_cmd!r} przestało działać – "
+                                f"powrót do bibliotek wbudowanych: {error}")
+                self._env = None
+                self._failed = True
+
+
 class JediCompletionThread(QThread):
     result_ready = pyqtSignal(list)
-    
-    def __init__(self, source, line, index):
+
+    def __init__(self, source, line, index, path=None, env_provider=None):
         super().__init__()
         self.source = source
         self.line = line
         self.index = index
-        
+        self.path = path                  # ścieżka pliku: importy z tego samego folderu
+        self.env_provider = env_provider
+
+    def _complete(self, environment):
+        script = jedi.Script(self.source, path=self.path, environment=environment)
+        completions = script.complete(self.line + 1, self.index)
+        return [c.name for c in completions] if completions else []
+
     def run(self):
+        env = self.env_provider.get() if self.env_provider else None
         try:
-            script = jedi.Script(self.source)
-            completions = script.complete(self.line + 1, self.index)
-            result = [c.name for c in completions] if completions else []
+            try:
+                result = self._complete(env)
+            except Exception as e:
+                if env is None:
+                    raise
+                # Środowisko ucznia zawiodło – zapamiętaj to i spróbuj ze środowiskiem wbudowanym
+                self.env_provider.mark_broken(env, e)
+                result = self._complete(None)
             self.result_ready.emit(result)
         except Exception as e:
             logging.warning(f"Błąd autouzupełniania Jedi: {e}")
@@ -147,6 +209,10 @@ class PythonEditor(QsciScintilla):
         self._jedi_thread = None
         self._pending_completion = False
         self._shutting_down = False
+
+        # Interpreter ucznia dla Jedi i ścieżka bieżącego pliku (ustawiane przez okno główne)
+        self.jedi_env = JediEnvironmentProvider()
+        self.path_provider = None
 
         self._debounce = QTimer(self)
         self._debounce.setSingleShot(True)
@@ -278,9 +344,26 @@ class PythonEditor(QsciScintilla):
                 return
 
             if key_text in ['"', "'"]:
-                next_char = self.text(line)[index:index + 1]
+                full_line = self.text(line)
+                before = full_line[:index]
+                next_char = full_line[index:index + 1]
                 if next_char == key_text:
                     self.setCursorPosition(line, index + 1)
+                    return
+
+                # Trzeci cudzysłów po pustym napisie ("" + ") → potrójny cudzysłów z zamknięciem: """|"""
+                if before.endswith(key_text * 2) and not before.endswith(key_text * 3):
+                    self.insert(key_text + key_text * 3)
+                    self.setCursorPosition(line, index + 1)
+                    return
+
+                # W komentarzu i w napisie cudzysłów to zwykły znak (np. „don't”, "Ala's").
+                # Tak samo po literze/cyfrze, chyba że to prefiks napisu: f"", r'', b"", rb'' itp.
+                word_before = self.get_word_before_cursor(line, index)
+                after_word = bool(before) and (before[-1].isalnum() or before[-1] == '_')
+                if (self._context_at_cursor() is not None or
+                        (after_word and word_before.lower() not in self._STRING_PREFIXES)):
+                    super().keyPressEvent(event)
                     return
 
             self.insert(key_text + pairs[key_text])
@@ -288,16 +371,77 @@ class PythonEditor(QsciScintilla):
             return
 
         if event.modifiers() == Qt.KeyboardModifier.ControlModifier and event.key() == Qt.Key.Key_Space:
-            self.request_jedi_completions()
+            self.request_jedi_completions()   # wywołanie ręczne działa zawsze
             return
 
         super().keyPressEvent(event)
 
         if key_text == '.' or (key_text.isalnum() or key_text == '_'):
+            # Bez automatycznych podpowiedzi w komentarzach i napisach
+            if self._context_at_cursor() is not None:
+                return
+            # Kropka w liczbie (np. „3.”) to część liczby, a nie odwołanie do atrybutu
+            if key_text == '.' and self._style_before_cursor() == QsciLexerPython.Number:
+                return
             line, index = self.getCursorPosition()
             word_part = self.get_word_before_cursor(line, index)
             if key_text == '.' or len(word_part) >= 2:
                 self.request_jedi_completions()
+
+    # ── Kontekst składniowy pod kursorem (na podstawie stylów leksera) ──────────
+    _COMMENT_STYLES = frozenset({QsciLexerPython.Comment, QsciLexerPython.CommentBlock})
+    _STRING_STYLES = frozenset({
+        QsciLexerPython.DoubleQuotedString, QsciLexerPython.SingleQuotedString,
+        QsciLexerPython.TripleSingleQuotedString, QsciLexerPython.TripleDoubleQuotedString,
+        QsciLexerPython.DoubleQuotedFString, QsciLexerPython.SingleQuotedFString,
+        QsciLexerPython.TripleSingleQuotedFString, QsciLexerPython.TripleDoubleQuotedFString,
+        QsciLexerPython.UnclosedString,
+    })
+    _STRING_PREFIXES = frozenset({'f', 'r', 'b', 'u', 'rb', 'br', 'fr', 'rf'})
+
+    def _style_at(self, pos):
+        return self.SendScintilla(QsciScintilla.SCI_GETSTYLEAT, pos)
+
+    def _ensure_styled(self, pos):
+        """Lekser koloruje leniwie (przy rysowaniu) – dostyluj tekst do pozycji pos włącznie."""
+        end_styled = self.SendScintilla(QsciScintilla.SCI_GETENDSTYLED)
+        if end_styled <= pos:
+            start_line = self.SendScintilla(QsciScintilla.SCI_LINEFROMPOSITION, end_styled)
+            start = self.SendScintilla(QsciScintilla.SCI_POSITIONFROMLINE, start_line)
+            end = min(pos + 1, self.SendScintilla(QsciScintilla.SCI_GETLENGTH))
+            self.SendScintilla(QsciScintilla.SCI_COLOURISE, start, end)
+
+    def _style_before_cursor(self):
+        pos = self.SendScintilla(QsciScintilla.SCI_GETCURRENTPOS)
+        if pos <= 0:
+            return None
+        self._ensure_styled(pos)
+        return self._style_at(self.SendScintilla(QsciScintilla.SCI_POSITIONBEFORE, pos))
+
+    def _context_at_cursor(self):
+        """'comment', 'string' albo None – czy kursor stoi wewnątrz komentarza lub napisu."""
+        pos = self.SendScintilla(QsciScintilla.SCI_GETCURRENTPOS)
+        if pos <= 0:
+            return None
+        self._ensure_styled(pos)
+        prev_style = self._style_at(self.SendScintilla(QsciScintilla.SCI_POSITIONBEFORE, pos))
+        if prev_style in self._COMMENT_STYLES:
+            return 'comment'
+        if prev_style == QsciLexerPython.UnclosedString:
+            return 'string'
+        if prev_style in self._STRING_STYLES:
+            # Znak przed kursorem należy do napisu – kursor jest w środku, jeśli znak ZA kursorem
+            # też należy do napisu; w przeciwnym razie kursor stoi tuż za zamykającym cudzysłowem.
+            length = self.SendScintilla(QsciScintilla.SCI_GETLENGTH)
+            if pos < length and self._style_at(pos) in self._STRING_STYLES:
+                return 'string'
+            # Koniec pliku: niezamknięty napis (np. docstring w trakcie pisania) ciągnie się do końca.
+            # Jeśli ostatni znak to cudzysłów, traktujemy go jako zamknięcie napisu.
+            if pos >= length:
+                prev_char = self.text()[-1:]
+                if prev_char not in ('"', "'"):
+                    return 'string'
+        return None
 
     def get_word_before_cursor(self, line, index):
         full_line = self.text(line)
@@ -344,7 +488,8 @@ class PythonEditor(QsciScintilla):
             return
             
         line, index = self.getCursorPosition()
-        t = JediCompletionThread(self.text(), line, index)
+        path = self.path_provider() if self.path_provider else None
+        t = JediCompletionThread(self.text(), line, index, path=path, env_provider=self.jedi_env)
         t.result_ready.connect(self._on_jedi_completed)
         t.finished.connect(self._on_jedi_finished)
         t.finished.connect(t.deleteLater)
@@ -387,7 +532,7 @@ class PythonEditor(QsciScintilla):
 # GŁÓWNA KLASA APLIKACJI
 # ─────────────────────────────────────────────────────────────────────────────
 class MkPyEdekGUI(QMainWindow):
-    VERSION = "1.0.7.0"
+    VERSION = "1.0.8.0"
 
     def __init__(self, file_to_open=None):
         super().__init__()
@@ -493,6 +638,9 @@ class MkPyEdekGUI(QMainWindow):
         layout.setContentsMargins(0, 0, 0, 0)
 
         self.editor = PythonEditor()
+        # Podpowiedzi Jedi: biblioteki z Pythona ucznia i importy z folderu bieżącego pliku
+        self.editor.path_provider = lambda: self.current_file
+        self.editor.jedi_env.set_python_cmd(self.python_cmd)
         layout.addWidget(self.editor)
         self.editor.modificationChanged.connect(self.update_title)
         self.setCentralWidget(main_widget)
@@ -630,25 +778,51 @@ class MkPyEdekGUI(QMainWindow):
     def select_all(self):
         self.editor.selectAll(True)
 
+    # Python rozróżnia wielkość liter (zmienna ≠ Zmienna), więc „Znajdź”, F3 i „Zamień”
+    # działają jednakowo: z rozróżnianiem wielkości liter. Jedno miejsce do ewentualnej zmiany.
+    SEARCH_CASE_SENSITIVE = True
+
+    @staticmethod
+    def _plural_wystapienie(n):
+        """1 wystąpienie, 2–4 wystąpienia, 5+ wystąpień (z wyjątkiem 12–14)."""
+        if n == 1:
+            return "wystąpienie"
+        if 2 <= n % 10 <= 4 and not 12 <= n % 100 <= 14:
+            return "wystąpienia"
+        return "wystąpień"
+
+    def _search(self, text):
+        """Szuka tekstu od pozycji kursora w przód, z zawijaniem do początku pliku.
+        Zwraca True, gdy znaleziono (trafienie zostaje zaznaczone)."""
+        before = self.editor.getCursorPosition()
+        found = self.editor.findFirst(text, False, self.SEARCH_CASE_SENSITIVE, False, True, True)
+        if found:
+            line_from, index_from, _, _ = self.editor.getSelection()
+            if (line_from, index_from) < before:
+                self.statusBar().showMessage("Wyszukiwanie wróciło do początku pliku.", 3000)
+        return found
+
     def find_text(self):
-        text, ok = QInputDialog.getText(self, "Znajdź", "Wpisz szukany tekst:")
+        text, ok = QInputDialog.getText(self, "Znajdź", "Wpisz szukany tekst:", text=self.last_search)
         if ok and text:
             self.last_search = text
-            found = self.editor.findFirst(text, False, False, False, True)
-            if not found:
-                QMessageBox.information(self, "Znajdź", "Nie znaleziono podanego tekstu.")
+            if not self._search(text):
+                QMessageBox.information(self, "Znajdź", f"Nie znaleziono tekstu „{text}”.")
 
     def find_next_text(self):
-        if self.last_search:
-            self.editor.findNext()
-        else:
+        # Zawsze szukamy last_search (findNext() powtarzałoby ostatnie findFirst, które mogło
+        # dotyczyć innego tekstu, np. po „Zamień wszystko”).
+        if not self.last_search:
             self.find_text()
+            return
+        if not self._search(self.last_search):
+            QMessageBox.information(self, "Znajdź następny", f"Nie znaleziono tekstu „{self.last_search}”.")
 
     def replace_text(self):
-        search_text, ok1 = QInputDialog.getText(self, "Zamień", "Wpisz szukany tekst:")
+        search_text, ok1 = QInputDialog.getText(self, "Zamień", "Wpisz szukany tekst:", text=self.last_search)
         if not (ok1 and search_text):
             return
-        replace_with, ok2 = QInputDialog.getText(self, "Zamień", f"Zastąp '{search_text}' na:")
+        replace_with, ok2 = QInputDialog.getText(self, "Zamień", f"Zastąp „{search_text}” na:")
         if not ok2:
             return
 
@@ -661,61 +835,93 @@ class MkPyEdekGUI(QMainWindow):
             return
 
         if reply == QMessageBox.StandardButton.Yes:
-            full_text = self.editor.text()
-            count = full_text.count(search_text)
-            if count:
-                new_text = full_text.replace(search_text, replace_with)
-                self.editor.beginUndoAction()
-                self.editor.selectAll()
-                self.editor.replaceSelectedText(new_text)
-                self.editor.endUndoAction()
-                self.statusBar().showMessage(f"Zamieniono {count} wystąpień.", 4000)
-            else:
-                QMessageBox.information(self, "Zamień", "Nie znaleziono podanego tekstu.")
+            self._replace_all(search_text, replace_with)
         else:
-            found = self.editor.findFirst(search_text, False, False, False, True)
-            if found:
+            if self._search(search_text):
                 self.editor.replace(replace_with)
                 self.statusBar().showMessage("Zamieniono 1 wystąpienie.", 4000)
             else:
-                QMessageBox.information(self, "Zamień", "Nie znaleziono podanego tekstu.")
+                QMessageBox.information(self, "Zamień", f"Nie znaleziono tekstu „{search_text}”.")
+
+    def _replace_all(self, search_text, replace_with):
+        full_text = self.editor.text()
+        count = full_text.count(search_text)   # z rozróżnianiem wielkości liter – tak jak _search
+        if not count:
+            QMessageBox.information(self, "Zamień", f"Nie znaleziono tekstu „{search_text}”.")
+            return
+
+        # Zapamiętaj widok, aby po podmianie tekstu kursor i przewinięcie nie wracały na początek pliku
+        cur_line, cur_index = self.editor.getCursorPosition()
+        first_visible = self.editor.firstVisibleLine()
+
+        new_text = full_text.replace(search_text, replace_with)
+        self.editor.beginUndoAction()
+        self.editor.selectAll()
+        self.editor.replaceSelectedText(new_text)
+        self.editor.endUndoAction()
+
+        last_line = max(0, self.editor.lines() - 1)
+        cur_line = min(cur_line, last_line)
+        line_len = len(self.editor.text(cur_line).rstrip('\r\n'))
+        self.editor.setCursorPosition(cur_line, min(cur_index, line_len))
+        self.editor.setFirstVisibleLine(min(first_visible, last_line))
+
+        self.statusBar().showMessage(f"Zamieniono {count} {self._plural_wystapienie(count)}.", 4000)
 
     def copy_to_clipboard(self):
         QApplication.clipboard().setText(self.editor.text())
         self.statusBar().showMessage("Kod skopiowany do schowka!", 3000)
 
+    # Maksymalna długość CAŁEGO adresu otwieranego w przeglądarce (po zakodowaniu URL).
+    # Wartość ostrożna: zakodowana polska litera zajmuje 6 znaków, a adres Gmaila jest kodowany
+    # drugi raz w parametrze continue= strony wyboru konta. Dłuższe adresy bywają odrzucane.
+    GMAIL_MAX_URL_LENGTH = 6000
+
+    @staticmethod
+    def _gmail_url(subject, body):
+        gmail_url = (f"https://mail.google.com/mail/?view=cm"
+                     f"&su={urllib.parse.quote(subject)}&body={urllib.parse.quote(body)}")
+        # Strona wyboru konta Google – ważne na wspólnych komputerach w pracowni
+        return f"https://accounts.google.com/AccountChooser?continue={urllib.parse.quote(gmail_url, safe='')}"
+
     def send_via_gmail(self):
         code = self.editor.text()
-        subject = urllib.parse.quote("Kod programu Python - mkPyEdek")
-        
-        if len(code) > 1500:
-            reply = QMessageBox.question(
-                self, "Kod zbyt długi",
-                "Kod jest zbyt długi, aby wstawić go automatycznie do treści maila.\n\n"
-                "Kod zostanie skopiowany do schowka – wklej go ręcznie w oknie Gmail.\n\n"
-                "Czy chcesz otworzyć Gmail?",
-                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No
-            )
-            if reply != QMessageBox.StandardButton.Yes:
-                return
-            QApplication.clipboard().setText(code)
-            body = urllib.parse.quote("(wklej kod ze schowka)")
-        else:
-            body = urllib.parse.quote(code)
-            
-        gmail_url = f"https://mail.google.com/mail/?view=cm&su={subject}&body={body}"
-        webbrowser.open(
-            f"https://accounts.google.com/AccountChooser?continue={urllib.parse.quote(gmail_url, safe='')}"
-        )
+        file_name = os.path.basename(self.current_file) if self.current_file else None
+        subject = f"Kod programu Python - {file_name}" if file_name else "Kod programu Python - mkPyEdek"
 
-    def share_to_classroom(self):
-        # save_file() sam przechodzi do "Zapisz jako", gdy plik jest nowy.
-        # Bez udanego zapisu nie otwieramy Classroom (plik na dysku byłby nieaktualny).
+        # Długość mierzona na gotowym adresie, a nie na surowym kodzie
+        url = self._gmail_url(subject, code)
+        if len(url) <= self.GMAIL_MAX_URL_LENGTH:
+            webbrowser.open(url)
+            return
+
+        # Kod za długi do treści wiadomości – trzeba go wysłać jako załącznik .py
+        reply = QMessageBox.question(
+            self, "Kod zbyt długi",
+            "Kod jest zbyt długi, aby wysłać go w treści wiadomości.\n\n"
+            "Wyślij go jako załącznik – plik z rozszerzeniem .py.\n\n"
+            "Kliknij „Tak”, aby zapisać plik, otworzyć nową wiadomość w Gmailu "
+            "i pokazać plik w folderze. Następnie dołącz go do wiadomości "
+            "(ikona spinacza lub przeciągnięcie pliku do okna wiadomości).",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No
+        )
+        if reply != QMessageBox.StandardButton.Yes:
+            return
+
+        # Załącznik musi być aktualnym plikiem na dysku (save_file sam przechodzi do „Zapisz jako”)
         if not self.save_file():
             return
-        webbrowser.open("https://classroom.google.com")
+        file_name = os.path.basename(self.current_file)
+        webbrowser.open(self._gmail_url(
+            f"Kod programu Python - {file_name}",
+            f"W załączniku przesyłam plik {file_name}."
+        ))
+        self._reveal_in_file_manager(self.current_file)
+
+    def _reveal_in_file_manager(self, path):
+        """Otwiera menedżer plików z zaznaczonym plikiem (Windows/macOS) lub jego folderem (Linux)."""
         try:
-            file_path = os.path.normpath(self.current_file)
+            file_path = os.path.normpath(path)
             if platform.system() == "Windows":
                 # Polecenie jako tekst, nie lista: z listą Popen ujmuje cały argument w cudzysłów
                 # ("/select,C:\...\Jan Kowalski\..."), czego Explorer nie rozumie przy spacjach w ścieżce.
@@ -728,6 +934,14 @@ class MkPyEdekGUI(QMainWindow):
         except Exception as e:
             logging.warning(f"Błąd integracji z przeglądarką plików: {e}")
 
+    def share_to_classroom(self):
+        # save_file() sam przechodzi do "Zapisz jako", gdy plik jest nowy.
+        # Bez udanego zapisu nie otwieramy Classroom (plik na dysku byłby nieaktualny).
+        if not self.save_file():
+            return
+        webbrowser.open("https://classroom.google.com")
+        self._reveal_in_file_manager(self.current_file)
+
     def change_theme(self, theme_name):
         self.current_theme = theme_name
         self.editor.apply_theme(theme_name)
@@ -735,6 +949,10 @@ class MkPyEdekGUI(QMainWindow):
         self.save_config()
 
     def open_recent_file(self, file_path):
+        # Brakujący plik: od razu komunikat, bez zbędnego pytania o zapis bieżących zmian
+        if not os.path.exists(file_path):
+            self.open_specific_file(file_path)
+            return
         if self.maybe_save():
             self.open_specific_file(file_path)
 
@@ -776,6 +994,7 @@ class MkPyEdekGUI(QMainWindow):
             if self._is_valid_python(path):
                 self.python_cmd = path
                 self._manual_python_cmd = True
+                self.editor.jedi_env.set_python_cmd(path)
                 self.save_config()
             else:
                 QMessageBox.warning(self, "Błąd",
@@ -833,24 +1052,21 @@ class MkPyEdekGUI(QMainWindow):
         file_path = os.path.abspath(file_path)
         if os.path.exists(file_path):
             try:
-                content = None
-                detected_enc = 'utf-8'
-                for enc in ('utf-8', 'cp1250', 'latin-2'):
+                with open(file_path, 'rb') as f:
+                    raw = f.read()
+
+                # Kolejność prób: UTF-8 → Windows-1250 → ISO-8859-2.
+                # ISO-8859-2 dekoduje każdy ciąg bajtów, więc pętla zawsze kończy się sukcesem
+                # i żaden bajt pliku nie jest zastępowany znakiem „�” (brak cichej utraty danych).
+                content, detected_enc = None, 'utf-8'
+                for enc in ('utf-8', 'cp1250', 'iso-8859-2'):
                     try:
-                        # newline='' – wczytaj końce linii bez zmian, aby wykryć styl (CRLF/LF)
-                        with open(file_path, 'r', encoding=enc, newline='') as f:
-                            content = f.read()
+                        content = raw.decode(enc)
                         detected_enc = enc
                         break
-                    except (UnicodeDecodeError, LookupError):
+                    except UnicodeDecodeError:
                         continue
-
-                if content is None:
-                    with open(file_path, 'r', encoding='utf-8', errors='replace', newline='') as f:
-                        content = f.read()
-                    detected_enc = 'utf-8'
-                    QMessageBox.warning(self, "Kodowanie",
-                        "Plik zawiera znaki spoza UTF-8. Część znaków może być wyświetlona niepoprawnie.")
+                # Końce linii pozostają bez zmian (decode nie zamienia \r\n), co pozwala wykryć styl CRLF/LF.
 
                 self._original_encoding = detected_enc
 
@@ -870,10 +1086,15 @@ class MkPyEdekGUI(QMainWindow):
             except Exception as e:
                 QMessageBox.critical(self, "Błąd", f"Nie można otworzyć pliku:\n{e}")
         else:
+            info = (f"Nie znaleziono pliku:\n{file_path}\n\n"
+                    "Plik mógł zostać przeniesiony, usunięty lub mieć zmienioną nazwę.")
             if file_path in self.recent_files:
                 self.recent_files.remove(file_path)
                 self.save_config()
                 self.update_recent_menu()
+                info += "\n\nPlik został usunięty z listy ostatnio otwieranych."
+            logging.warning(f"Nie znaleziono pliku do otwarcia: {file_path}")
+            QMessageBox.warning(self, "Brak pliku", info)
 
     def save_file(self):
         if self.current_file:
@@ -888,11 +1109,15 @@ class MkPyEdekGUI(QMainWindow):
                 )
                 if reply != QMessageBox.StandardButton.Yes:
                     return False
-                self._original_encoding = 'utf-8'
+
+            # Plik zawsze trafia na dysk w UTF-8 – deklaracja kodowania (PEP 263) musi temu odpowiadać
+            self._fix_coding_declaration()
 
             try:
                 with open(self.current_file, 'w', encoding='utf-8', newline='') as f:
                     f.write(self.editor.text())
+                # Zmiana kodowania dopiero po udanym zapisie – po błędzie pytanie padnie ponownie
+                self._original_encoding = 'utf-8'
                 self.editor.setModified(False)
                 self.add_to_recent(self.current_file)
                 self.update_title()
@@ -901,6 +1126,44 @@ class MkPyEdekGUI(QMainWindow):
                 QMessageBox.critical(self, "Błąd", f"Nie można zapisać pliku:\n{e}")
                 return False
         return self.save_as_file()
+
+    # Deklaracja kodowania wg PEP 263, np. "# -*- coding: cp1250 -*-" lub "# vim: set fileencoding=latin2"
+    _CODING_RE = re.compile(r'^[ \t\f]*#.*?coding[:=][ \t]*([-\w.]+)')
+    _BLANK_OR_COMMENT_RE = re.compile(r'^[ \t\f]*(?:[#\r\n]|$)')
+
+    def _fix_coding_declaration(self):
+        """Zamienia deklarację kodowania innego niż UTF-8 na 'utf-8' w pierwszych dwóch liniach.
+
+        Edytor zapisuje pliki w UTF-8. Pozostawiona deklaracja np. cp1250 sprawia, że Python
+        przy uruchomieniu odczytuje plik w złym kodowaniu (polskie znaki stają się „krzaczkami”).
+        Zgodnie z PEP 263 deklaracja w 2. linii obowiązuje tylko, gdy 1. linia jest pusta lub jest komentarzem.
+        """
+        for line_no in range(min(2, self.editor.lines())):
+            line_text = self.editor.text(line_no)
+            if line_no == 1 and not self._BLANK_OR_COMMENT_RE.match(self.editor.text(0)):
+                return
+            m = self._CODING_RE.match(line_text)
+            if not m:
+                continue
+            declared = m.group(1)
+            try:
+                if codecs.lookup(declared).name == 'utf-8':
+                    return  # deklaracja już poprawna
+            except LookupError:
+                pass  # nieznane kodowanie – Python i tak by go nie przyjął, zamieniamy na utf-8
+
+            cur_line, cur_index = self.editor.getCursorPosition()
+            start, end = m.span(1)
+            self.editor.beginUndoAction()
+            self.editor.setSelection(line_no, start, line_no, end)
+            self.editor.replaceSelectedText('utf-8')
+            self.editor.endUndoAction()
+            if cur_line == line_no and cur_index > start:
+                cur_index = max(start, cur_index + len('utf-8') - (end - start))
+            self.editor.setCursorPosition(cur_line, cur_index)
+            self.statusBar().showMessage(
+                f"Zmieniono deklarację kodowania „{declared}” na „utf-8” (plik zapisywany jest w UTF-8).", 6000)
+            return  # obowiązuje tylko pierwsza deklaracja
 
     def save_as_file(self):
         dialog = QFileDialog(self, "Zapisz jako", self.last_dir, "Pliki Python (*.py)")
@@ -937,10 +1200,7 @@ class MkPyEdekGUI(QMainWindow):
         try:
             compile(source, self.current_file or "<string>", "exec", dont_inherit=True)
         except SyntaxError as e:
-            line = e.lineno - 1 if e.lineno else 0
-            self.editor.setCursorPosition(line, 0)
-            self.editor.setSelection(line, 0, line, self.editor.lineLength(line))
-            QMessageBox.critical(self, "Błąd składni", f"Błąd w linii {e.lineno}:\n{e.msg}")
+            self._show_syntax_error(e)
             return
         except (ValueError, RecursionError, MemoryError) as e:
             QMessageBox.critical(self, "Błąd analizy kodu", f"Nie udało się zweryfikować składni:\n{e}")
@@ -950,6 +1210,30 @@ class MkPyEdekGUI(QMainWindow):
             return
             
         self._launch_process()
+
+    def _show_syntax_error(self, e):
+        """Zaznacza linię z błędem składni, pokazuje komunikat, a potem ustawia kursor w miejscu błędu."""
+        last_line = max(0, self.editor.lines() - 1)
+        # lineno bywa większe niż liczba linii (np. błąd „unexpected EOF” na końcu pliku)
+        line = min(max((e.lineno or 1) - 1, 0), last_line)
+
+        # Długość w ZNAKACH, bez końca linii (\n lub \r\n) – lineLength() zwraca bajty UTF-8 razem z EOL
+        line_text = self.editor.text(line).rstrip('\r\n')
+        line_len = len(line_text)
+        # offset jest liczony od 1; poza zakresem (lub brak) → początek/koniec linii
+        col = min(max((e.offset or 1) - 1, 0), line_len)
+
+        self.editor.ensureLineVisible(line)
+        self.editor.setSelection(line, 0, line, line_len)
+
+        msg = f"Błąd w linii {e.lineno or line + 1}"
+        if e.offset:
+            msg += f", kolumna {col + 1}"
+        QMessageBox.critical(self, "Błąd składni", f"{msg}:\n{e.msg}")
+
+        # Po zamknięciu komunikatu kursor stoi dokładnie w miejscu błędu, gotowy do poprawki
+        self.editor.setCursorPosition(line, col)
+        self.editor.setFocus()
 
     def _launch_process(self):
         try:
@@ -966,7 +1250,23 @@ class MkPyEdekGUI(QMainWindow):
                     "try:\n    runpy.run_path(path, run_name='__main__')\n"
                     "except SystemExit:\n    pass\n"
                     "except BaseException:\n    traceback.print_exc()\n"
-                    "finally:\n    input('\\nNaciśnij Enter, aby zamknąć...')\n"
+                    "finally:\n"
+                    "    try:\n"
+                    "        if sys.stdin is None or sys.stdin.closed:\n"
+                    "            raise ValueError('stdin zamknięte')\n"
+                    "        input('\\nNaciśnij Enter, aby zamknąć...')\n"
+                    "    except KeyboardInterrupt:\n"
+                    "        pass\n"
+                    # Program ucznia zamknął lub wyczerpał stdin – czekamy na klawisz bezpośrednio
+                    # z konsoli (msvcrt), aby okno z wynikiem lub błędem nie zniknęło od razu.
+                    "    except (EOFError, ValueError, OSError, RuntimeError):\n"
+                    "        try:\n"
+                    "            import msvcrt\n"
+                    "            sys.__stdout__.write('\\nNaciśnij dowolny klawisz, aby zamknąć...')\n"
+                    "            sys.__stdout__.flush()\n"
+                    "            msvcrt.getwch()\n"
+                    "        except Exception:\n"
+                    "            pass\n"
                 )
                 flags = getattr(subprocess, 'CREATE_NEW_CONSOLE', 0)
                 subprocess.Popen(

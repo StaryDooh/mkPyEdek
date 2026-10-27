@@ -1,162 +1,163 @@
-### 🔴 Błędy realne (do poprawy w pierwszej kolejności)
+# mkPyEdek – problemy do rozwiązania
 
-~~**1. Ctrl+Z po otwarciu pliku przywraca poprzedni plik.**  
+**Wersja sprawdzana:** 1.0.8.0 · **Docelowy system:** Windows (aplikacja .exe, PyInstaller w trybie katalogu)
+**Metoda:** testy automatyczne w prawdziwym PyQt6/QScintilla (tryb offscreen), uruchamianie zapisanych plików przez Pythona, testy runnera F5 z atrapą `msvcrt`, budowanie próbne PyInstallerem 6.22, `pyflakes`. Wszystkie znaleziska poniżej są potwierdzone testem, chyba że zaznaczono inaczej.
 
-~~`setText()` i `clear()` nie czyszczą historii cofania w QScintilla. Wystarczy otworzyć plik B i nacisnąć Ctrl+Z, a w oknie pojawi się treść pliku A. Następne Ctrl+S nadpisze wtedy plik B treścią pliku A. To samo dzieje się po „Nowy”.~~
+Legenda: 🔴 błąd realny · 🟠 nieścisłość / błąd brzegowy · 🟡 bezpieczeństwo i odporność · ⚪ porządki w kodzie
 
-~~python~~
+---
+
+## Stan poprzednich poprawek (1.0.6.3 – 1.0.8.0)
+
+Cały zestaw testów regresji przechodzi na wersji 1.0.8.0 – żadna z wcześniejszych poprawek nie została zepsuta.
+
+| # | Problem | Wersja | Test |
+|---|---|---|---|
+| 1 | Ctrl+Z po otwarciu pliku / „Nowy” przywracał poprzedni plik | 1.0.6.3 | ✔ |
+| 2 | Dublowanie nawiasów zamykających | 1.0.6.4 | ✔ |
+| 3 | F5 bez Pythona – mylący `TypeError` | 1.0.6.5 | ✔ |
+| 4 | Brak walidacji `python_cmd` (config, „Wskaż plik”, autodetekcja) | 1.0.6.6 | ✔ |
+| 5 | Filtr okna „Wskaż plik” | 1.0.6.7 | ✔ |
+| 6 | Zamknięcie programu w trakcie pracy Jedi | 1.0.6.8 | ✔ |
+| 7 | „Udostępnij w Classroom” ignorował wynik zapisu | 1.0.6.9 | ✔ |
+| 8 | Explorer nie zaznaczał pliku przy spacjach w ścieżce | 1.0.6.10 | ⚠ tylko linia poleceń – patrz „Do sprawdzenia na Windows” |
+| 9 | Style leksera w ciemnych motywach + lekser usuwany przez GC | 1.0.6.11 | ✔ |
+| 10 | Końce linii CRLF zamieniane po cichu na LF | 1.0.7.0 | ✔ |
+| 11 | Nieistniejący kodek `latin-2` (utrata danych), deklaracja `coding:` | 1.0.7.1 | ✔ |
+| 12 | Zaznaczanie linii z błędem składni | 1.0.7.2 | ✔ |
+| 13 | Znajdź / F3 / Zamień – niespójności | 1.0.7.3 | ✔ |
+| 14 | Gmail – długość kodu; długi kod jako załącznik | 1.0.7.4 | ✔ |
+| 15 | Runner F5 – zamknięte stdin | 1.0.7.5 | ✔ (atrapa `msvcrt`) |
+| 16 | Jedi nie znał bibliotek ucznia | 1.0.7.6 | ✔ (+ budowanie próbne PyInstallerem) |
+| 17 | Nachalne autouzupełnianie i parowanie cudzysłowów | 1.0.7.7 | ✔ 24/24 przypadki |
+| 18 | Brak komunikatu o nieistniejącym pliku | 1.0.8.0 | ✔ |
+
+> Uwaga do punktu 15: wbudowane w Pythona `exit()` **zamyka `sys.stdin`**. W wersjach sprzed 1.0.7.5 każdy program ucznia kończący się `exit()` zamykał okno konsoli natychmiast (bez szansy na przeczytanie wyniku). Poprawka 1.0.7.5 usuwa ten problem – test potwierdził, że okno teraz czeka.
+
+---
+
+## 🔴 Błędy realne
+
+### 1. Runner F5 połyka komunikat z `sys.exit("…")`
+
+`except SystemExit: pass` ignoruje treść wyjątku. Zwykły Python wypisuje tekst przekazany do `sys.exit()` – w mkPyEdek uczeń nie widzi nic.
+
+Test – program `sys.exit("Program tylko dla osób od 13 lat.")`:
+
+| Uruchomienie | Wynik |
+|---|---|
+| `python plik.py` | `Program tylko dla osób od 13 lat.` (kod 1) |
+| mkPyEdek (F5) | tylko „Naciśnij Enter, aby zamknąć…” |
+
+Poprawka w tekście runnera (`_launch_process`):
 
 ```python
-self.editor.setText(content)
-self.editor.SendScintilla(QsciScintilla.SCI_EMPTYUNDOBUFFER)
+"except SystemExit as e:\n"
+"    if e.code is not None and not isinstance(e.code, int):\n"
+"        print(e.code, file=sys.stderr)\n"
 ```
 
-~~To samo trzeba dodać w `new_file()` po `clear()`.~~
+### 2. Otwarcie i zapis pliku binarnego niszczy go
 
-~~**2. Nawiasy zamykające się dublują.**~~  
+Filtr „Wszystkie pliki (*)” pozwala otworzyć dowolny plik. Od 1.0.7.1 kodowanie `iso-8859-2` przyjmuje każdy ciąg bajtów, więc np. obrazek PNG wczytuje się jako „tekst”. Przy zapisie pada tylko standardowe pytanie „Plik był oryginalnie zapisany w kodowaniu ISO-8859-2…” – po kliknięciu „Tak” plik zostaje zapisany w UTF-8 i **jest uszkodzony** (test: PNG po zapisie różni się od oryginału).
 
-~~Program obsługuje „przeskakiwanie” tylko dla cudzysłowów. Gdy uczeń wpisze ręcznie `print()`, dostanie `print())`. Na lekcjach będzie to najczęstsza skarga.~~
-
-~~python~~
+Poprawka w `open_specific_file`, przed dekodowaniem:
 
 ```python
-if key_text in (')', ']', '}') and not self.hasSelectedText():
-    line, index = self.getCursorPosition()
-    if self.text(line)[index:index + 1] == key_text:
-        self.setCursorPosition(line, index + 1)
-        return
-```
-
-~~**3. F5 bez wykrytego Pythona pokazuje mylący komunikat.**~~  
-
-~~Gdy użytkownik wybierze „Ignoruj”, `python_cmd` ma wartość `None`. Wtedy `Popen([None, ...])` rzuca `TypeError`, a uczeń widzi komunikat „Nie uruchomiono interpretera: expected str…”. Na początku `run_code` warto dodać:~~
-
-~~python~~
-
-```python
-if not self.python_cmd:
-    self.check_python_installed()
-    if not self.python_cmd:
-        return
-```
-
-~~**4. Ścieżka `python_cmd` z config.json nie jest sprawdzana.**~~
-
-~~`os.path.isfile` i `os.access(X_OK)` w Windows przepuszczą każdy istniejący plik. Błędny wpis w konfiguracji daje dokładnie ten objaw, który już raz się pojawił: konsola mignie i zniknie. Proponuję wydzielić `_is_valid_python(path)`, czyli uruchomienie `--version` i sprawdzenie, czy wynik zaczyna się od „Python”. Tej funkcji należy użyć w `load_config`, w „Wskaż plik” i w `_detect_python`. Jeśli zapisana ścieżka okaże się zła, program powinien ją porzucić i wrócić do autodetekcji.~~
-
-~~**5. Filtr w oknie „Wskaż plik” nie działa.**~~
-
-~~`"Python Executable (*.exe; python; python3)"`: Qt rozdziela wzorce spacją, nie średnikiem. Wzorzec `*.exe;` zawiera dosłowny średnik, więc pliki .exe nie zostaną pokazane. Poprawny zapis to `"Interpreter Python (python*.exe py.exe)"` w Windows oraz `"(python python3)"` w pozostałych systemach.~~
-
-~~**6. Zamknięcie programu w trakcie pracy Jedi może zakończyć się awarią.**~~
-
-~~`wait(500)` czeka najwyżej pół sekundy. Pierwsze wywołanie Jedi na większym pliku trwa dłużej, więc obiekt QThread zostaje zniszczony w trakcie działania i pojawia się „QThread: Destroyed while thread is still running”, czyli twarde przerwanie procesu. Należy użyć `wait()` bez limitu. Lepiej też przenieść tę logikę do metody `editor.shutdown()` zamiast sięgać z okna do prywatnych pól `_debounce` i `_jedi_thread`.~~
-
-~~**7. „Udostępnij w Classroom” ignoruje wynik zapisu.**~~
-
-~~Gdy plik jest nowy, zapisuje się dwukrotnie: najpierw w `save_as_file`, potem w `save_file`. Co gorsza, wynik `save_file()` nie jest sprawdzany. Po nieudanym zapisie albo anulowaniu pytania o kodowanie Classroom i tak się otworzy z nieaktualnym plikiem. Cała obsługa sprowadza się do:~~
-
-~~python~~
-
-```python
-if not self.save_file():   # save_file sam przechodzi do save_as
+if b'\x00' in raw[:8192]:
+    QMessageBox.warning(self, "Nieobsługiwany plik",
+        f"Plik {os.path.basename(file_path)} nie jest plikiem tekstowym i nie może być edytowany.")
     return
 ```
 
-~~**8. Explorer nie zaznacza pliku, gdy ścieżka zawiera spacje.**~~
+Warto też ostrzegać przy bardzo dużych plikach (np. > 2 MB) – edytor i Jedi zwalniają, a dla ucznia to prawie zawsze pomyłka.
 
-~~Lista `["explorer", f"/select,{path}"]` zamienia się w `"/select,C:\Users\Jan Kowalski\..."`. Explorer nie rozumie argumentu objętego w całości cudzysłowem i otwiera „Dokumenty”. Działa wersja tekstowa:~~
+---
 
-~~python~~
+## 🟠 Nieścisłości i błędy brzegowe
 
-```python
-subprocess.Popen(f'explorer /select,"{file_path}"')
-```
+### 3. Zapis pliku nie jest atomowy – błąd w trakcie zapisu niszczy pracę ucznia
 
-~~**9. Część kodu źle wygląda w ciemnych motywach.**~~
-
-~~Pętla kolorów obejmuje tylko 12 stylów. Dekoratory, f-stringi (`DoubleQuotedFString` i pokrewne), `CommentBlock` i `UnclosedString` zachowują domyślne kolory leksera, często ciemne na ciemnym tle. Mają też inną czcionkę, bo `setDefaultFont` nie zmienia już istniejących stylów. Przed pętlą wystarczy ustawić bazę dla wszystkich stylów:~~
-
-~~python~~
+`open(..., 'w')` najpierw czyści plik, a dopiero potem zapisuje treść. Test z symulowanym błędem zapisu (np. pełny dysk, zerwane połączenie z dyskiem sieciowym/OneDrive): komunikat „Nie można zapisać pliku” pojawia się poprawnie, ale na dysku zostaje **ucięty fragment** (`'y = 2\ny = '`) – poprzednia wersja pliku przepadła. W szkołach z dyskami sieciowymi (H:) to realne ryzyko.
 
 ```python
-lexer.setColor(fg); lexer.setFont(font); lexer.setPaper(bg)
+tmp = self.current_file + ".tmp"
+with open(tmp, 'w', encoding='utf-8', newline='') as f:
+    f.write(self.editor.text())
+    f.flush(); os.fsync(f.fileno())
+os.replace(tmp, self.current_file)      # atomowa podmiana; przy błędzie oryginał zostaje nietknięty
 ```
-### 🟠 Nieścisłości i błędy brzegowe
 
-~~**10. Mieszane końce linii.**~~
+(Przy błędzie usunąć `.tmp` w `except`.) Ten sam wzorzec dla `config.json` – patrz punkt 4.
 
-~~Odczyt bez `newline=''` zamieniał `\r\n` na `\n`, więc pliki CRLF były po cichu konwertowane na LF przy zapisie.~~
+### 4. Uszkodzony `config.json` kasuje ustawienia i listę ostatnich plików
 
-**11. Wykrywanie kodowania:** *(opis poprawiony – dwa pierwsze pierwotne podpunkty były błędne)*
+Test: ucięty plik konfiguracji (`{"recent_files": [...], "theme": "Ciemny", `). Po starcie: motyw „Jasny”, lista ostatnich pusta, a `config.json` zostaje od razu **nadpisany wartościami domyślnymi** (zapis wymusza `change_theme` przy starcie). Uczeń traci listę ostatnich plików i nie da się tego odtworzyć.
 
--   🆕 🔴 **Kodek `'latin-2'` nie istnieje w Pythonie** (poprawne nazwy: `'latin2'`, `'iso-8859-2'`). Pętla łapie `LookupError` i po cichu go pomija. Plik z bajtami nieznanymi w CP1250 (np. `0x81`, `0x83`, `0x98`) trafia więc do gałęzi `errors='replace'`: znaki zamieniają się na `�`, a `_original_encoding` ustawia się na `'utf-8'`, więc **przy zapisie nie pada pytanie o zmianę kodowania i oryginalne bajty zostają bezpowrotnie utracone**. Gałąź `if content is None` nie jest więc martwym kodem, jak napisano wcześniej – jest osiągalna i niszczy dane. Poprawka: `'iso-8859-2'` w miejsce `'latin-2'` (wtedy gałąź awaryjna faktycznie stanie się martwa i można ją uprościć).
--   🆕 🟠 **Deklaracja `# -*- coding: cp1250 -*-` zostaje w pliku po konwersji do UTF-8.** Edytor zapisuje plik w UTF-8, ale Python przy uruchomieniu (F5) czyta go zgodnie z deklaracją jako CP1250 – test: `print("żółw")` wypisuje `ĹĽĂłĹ‚w`. `compile()` w edytorze tego nie wykrywa, bo dostaje gotowy tekst. Przy zapisie w UTF-8 należy usunąć lub zamienić deklarację w pierwszych dwóch liniach (albo uwzględniać ją przy odczycie – PEP 263).
--   ~~Plik UTF-8 z BOM wczyta się z niewidocznym znakiem BOM, a `compile()` zgłosi błąd składni w linii 1.~~ – **nieaktualne:** QScintilla usuwa BOM przy `setText()`, `compile()` działa poprawnie. Skutek uboczny: BOM znika z pliku po zapisie (zwykle nieszkodliwe, dla Pythona wręcz korzystne). Można zostawić.
+Poprawka: przy błędzie odczytu zmienić nazwę pliku na `config.json.bak` (do diagnozy) i zapisywać konfigurację atomowo (jak w punkcie 3).
 
-**12. Zaznaczenie linii z błędem.** *(potwierdzone)* `lineLength()` zwraca liczbę **bajtów** razem ze znakiem końca linii, a `setSelection` oczekuje znaków. Test: linia `print('żółć gęś') x` ma 19 znaków, a `lineLength()` zwraca 26. Od 1.0.7.0 w plikach CRLF dochodzą jeszcze 2 znaki końca linii zamiast 1. Należy użyć `len(self.editor.text(line).rstrip('\r\n'))`. Przy okazji można ustawić kursor na `e.offset`, czyli dokładnie w miejscu błędu.
-*(Sprawdzone przy okazji: `getCursorPosition()` zwraca indeks w znakach, nie w bajtach, więc przeskakiwanie nawiasów z punktu 2 i `get_word_before_cursor` działają poprawnie z polskimi znakami.)*
+### 5. Lista podpowiedzi zaczyna się od stałych i nazw z podkreśleniem
 
-**13. „Zamień” i „Znajdź następny” działają niespójnie.** *(potwierdzone, rozszerzone)*
+`showUserList(1, sorted(names))` sortuje alfabetycznie według kodów znaków: WIELKIE LITERY < `_` < małe litery. Test `os.`: Jedi zwraca `abc, abort, access, …`, a edytor pokazuje `CLD_CONTINUED, CLD_DUMPED, CLD_EXITED, …`; po `moj_modul.` pierwsze są `__doc__`, `__file__`, `__name__`. Dla początkującego to najmniej przydatne pozycje.
 
--   `findFirst(..., cs=False)` szuka bez rozróżniania wielkości liter, a `str.replace` przy „zamień wszystko” ją rozróżnia. Test: w tekście `Ala ala ALA` wyszukiwanie znajduje 3 trafienia, a „zamień wszystko” zamieni 1.
--   „Zamień wszystko” podmienia cały tekst, przez co kursor i przewinięcie lądują na początku pliku.
--   🆕 **F3 szuka nie tego, co trzeba.** `find_next_text` sprawdza `self.last_search`, ale wywołuje `findNext()`, które powtarza **ostatnie wywołanie `findFirst`**. „Zamień wszystko” ustawia `last_search`, ale nie woła `findFirst`, więc F3 szuka poprzedniego wyrażenia (test: po zamianie dla „szukaj” F3 znalazł „y” z wcześniejszego „Znajdź”). Gdy `findFirst` nie było wołane wcale, F3 nic nie robi. Poprawka: w F3 wołać `findFirst(self.last_search, ...)` od pozycji kursora.
--   F3 nie informuje, gdy nic nie znaleziono (przy `wrap=True` wyniki się zapętlają, ale brak trafień jest cichy).
-
-**14. Limit długości kodu w Gmailu.** *(potwierdzone)* Limit 1500 znaków jest liczony na surowym kodzie. Po kodowaniu URL polska litera zajmuje 6 znaków, a cały adres jest kodowany jeszcze raz w `continue=`. Test: kod z polskimi znakami o długości 1620 znaków daje treść 5160 znaków po kodowaniu i adres URL o długości 8282 znaków. Należy mierzyć `len(urllib.parse.quote(code))`. Endpoint `AccountChooser` jest nieudokumentowany i może przestać działać bez ostrzeżenia. Od 1.0.7.0 pliki CRLF dodają po 6 znaków (`%0D%0A`) na każdą linię.
-
-**15. Uruchamianie przez `runpy` różni się od zwykłego `python plik.py`.** *(bez zmian – kod uruchamiania nie był modyfikowany)*
-
--   `multiprocessing` w Windows (spawn) i `pickle` klas z `__main__` mogą nie działać.
--   Gdy skrypt zamknie stdin, `input()` w `finally` rzuci `EOFError`.
--   W systemach macOS i Linux skrypt startuje bez runnera, więc zachowanie zależy od systemu. Do drobnych zadań szkolnych to wystarcza, ale warto o tym pamiętać.
-
-**16. Autouzupełnianie nie zna bibliotek ucznia.** *(bez zmian)*  
-`jedi.Script(source)` dostaje kod bez `path` i bez `environment`. W zbudowanym .exe Jedi zna tylko to, co spakowano do programu, więc `pygame` czy `numpy` z Pythona ucznia nie będą podpowiadane. Importy względne też nie zadziałają. Od 1.0.6.6 `python_cmd` jest zawsze sprawdzonym interpreterem, więc można go bezpiecznie użyć do `create_environment`. Rozwiązanie (wątek Jedi musi dostać też `current_file`):
-
-python
+Scintilla wymaga listy posortowanej (dopasowywanie podczas pisania), chyba że ustawi się własną kolejność. Do wyboru:
 
 ```python
-env = jedi.create_environment(python_cmd, safe=False)   # utworzyć raz i zachować
-jedi.Script(source, path=current_file, environment=env)
+# a) ukryć nazwy prywatne/specjalne, chyba że uczeń sam zaczął od „_”
+if not word_part.startswith('_'):
+    names = [n for n in names if not n.startswith('_')]
+# b) zachować kolejność Jedi (najtrafniejsze na górze)
+self.SendScintilla(QsciScintilla.SCI_AUTOCSETORDER, QsciScintilla.SC_ORDER_CUSTOM)
 ```
 
-**17. Autouzupełnianie bywa nachalne.** *(potwierdzone testem)*
+### 6. Parowanie nawiasów i cudzysłowów przed istniejącym tekstem
 
--   Lista podpowiedzi wyskakuje także w komentarzach i napisach (wpisanie `# ab` uruchamia Jedi).
--   Wpisanie `3.` uruchamia podpowiedzi (metody typu float).
--   Auto-cudzysłów psuje `don't` w komentarzu – wynik: `# don't'`.
--   Potrójne `"""` daje `""""` (kursor przed ostatnim cudzysłowem).
--   Nawiasy w komentarzach działają poprawnie – przeskakiwanie z punktu 2 nie powoduje tu problemów.
+Nawias/cudzysłów jest parowany zawsze, także tuż przed literą – typowa sytuacja przy poprawianiu kodu:
 
-Warto sprawdzać styl pod kursorem (`SCI_GETSTYLEAT`) i nie parować ani nie podpowiadać wewnątrz komentarzy i napisów.
+| Sytuacja | Wynik |
+|---|---|
+| `print x`, kursor przed `x`, wpisanie `(` | `print (|)x` |
+| `s = abc`, kursor przed `abc`, wpisanie `"` | `s = "|"abc` |
+| w napisie `print("…")` wpisanie `:(` | `print(":()")` |
 
-**18. Plik podany w linii poleceń albo z listy ostatnich, który nie istnieje,** jest pomijany bez żadnego komunikatu. *(potwierdzone testem – 0 komunikatów; plik jest tylko usuwany z listy ostatnich)*
+Poprawka: parować tylko, gdy znak za kursorem jest końcem linii, spacją albo jednym z `)]}:,;`; w napisach i komentarzach nie parować nawiasów (z wyjątkiem `{` w f-stringach).
 
-### 🟡 Bezpieczeństwo i odporność
+---
 
-*(cała sekcja bez zmian – żadna z poprawek jej nie dotyczyła)*
+## 🟡 Bezpieczeństwo i odporność
 
--   **`shutil.which` w Windows przeszukuje najpierw bieżący katalog.** W pracowni ktoś może podrzucić `python.exe` do folderu, z którego startuje edytor. Bezpieczniej szukać wyłącznie w `PATH` albo odrzucać trafienia z `os.getcwd()`. Walidacja z 1.0.6.6 (`_is_valid_python`) tego nie rozwiązuje – podrzucony plik wystarczy, że wypisze tekst zaczynający się od „Python”.
--   **Zapis nie jest atomowy** ani dla pliku z kodem, ani dla config.json. Awaria w trakcie zapisu może zniszczyć plik. Bezpieczniejszy wzorzec to zapis do `plik.tmp`, a potem `os.replace()`. Uszkodzony config.json jest dziś po cichu nadpisywany wartościami domyślnymi, więc lista ostatnich plików znika.
--   **Log rośnie bez końca** (`filemode='a'`). Lepiej użyć `RotatingFileHandler`.
--   **Kod wysyłany przez Gmail trafia w całości do adresu URL,** a więc do historii przeglądarki.
+- **`shutil.which` w Windows sprawdza też bieżący katalog** (zgodnie z dokumentacją Pythona – chyba że ustawiona jest zmienna `NoDefaultCurrentDirectoryInExePath`). Jeśli edytor zostanie uruchomiony z folderu ucznia (np. przez „Otwórz za pomocą”), podrzucony tam `python.exe` może zostać wybrany jako interpreter. `_is_valid_python` nie chroni – wystarczy, że program wypisze tekst zaczynający się od „Python”. Poprawka: odrzucać trafienia leżące w `os.getcwd()` albo szukać tylko w katalogach z `PATH`.
+- **Log rośnie bez końca** (`filemode='a'`) – `logging.handlers.RotatingFileHandler(LOG_FILE, maxBytes=1_000_000, backupCount=2, encoding='utf-8')`.
+- **`AccountChooser` jest nieudokumentowanym adresem Google** – może przestać działać bez ostrzeżenia. Krótki kod nadal trafia w całości do adresu URL, a więc do historii przeglądarki (na wspólnym komputerze widać go po zalogowaniu kolejnej osoby).
+- **Błędy przed utworzeniem okna są niewidoczne.** W .exe budowanym z `--noconsole` wyjątek przy `os.makedirs(USER_DIR)` lub `logging.basicConfig` (np. problem z profilem mobilnym) zatrzymuje program bez żadnego komunikatu. *(Nie testowane – analiza kodu.)*
+- **Dwa okna edytora nadpisują sobie `config.json`** – ostatnio zamknięte wygrywa (lista ostatnich plików z drugiego okna znika). *(Analiza kodu.)*
 
-### ⚪ Nadmiarowy kod i porządki
+---
 
--   Nieużywany `import time`.
--   **Motywy są zdefiniowane w dwóch miejscach**: w `apply_theme` i `apply_ui_theme`, do tego lista `is_dark` jest wpisana na sztywno. Jeden słownik `THEMES` z kompletem kolorów usunie duplikację i ryzyko rozjazdu.
--   `getattr(self, '_original_encoding', 'utf-8')` jest zbędne, bo atrybut jest zawsze ustawiany w `__init__`.
--   Motyw edytora jest nakładany dwa razy przy starcie: w `PythonEditor.__init__` i w `change_theme`. Do tego `change_theme` zapisuje config przy każdym uruchomieniu programu.
--   Nawiasy w `key_text == '.' or (key_text.isalnum() or ...)` są zbędne.
--   Lepiej przekazywać `line` i `index` w sygnale `result_ready` niż odczytywać je przez `self.sender()`.
--   `_detect_python` przy starcie może blokować GUI nawet przez 3 × 5 s. *(od 1.0.6.6 dochodzi jedno sprawdzenie `--version` dla ścieżki zapisanej w config.json – zwykle kilkadziesiąt ms)*
--   `except Exception` w `resource_path` lepiej zawęzić do `AttributeError`.
--   Na liście ostatnich plików dwa pliki `main.py` z różnych folderów są nie do odróżnienia. Warto dodać tooltip z pełną ścieżką.
--   🆕 Komunikat „Plik zawiera znaki spoza UTF-8…” w gałęzi awaryjnej odczytu jest mylący (plik zwykle jest w innym kodowaniu, a nie „zawiera znaki spoza UTF-8”) – do poprawienia razem z punktem 11.
--   🆕 CHANGELOG, wpis 1.0.4.3, opisuje lekser „przydzielany w sposób trwały”, ale do 1.0.6.11 był on usuwany po każdej zmianie motywu – opis odpowiada stanowi faktycznemu dopiero od 1.0.6.11.
+## ⚪ Nadmiarowy kod i porządki
 
-*(Wszystkie pozostałe pozycje tej sekcji sprawdzone na 1.0.7.0 – nadal aktualne.)*
+- **Kod dla macOS i Linuksa jest martwy** (program działa tylko w Windows): gałęzie `Darwin`/`else` w `_launch_process` (~30 linii, w tym plik tymczasowy `.sh` i AppleScript), w `_reveal_in_file_manager`, w `_detect_python` i w filtrze „Wskaż plik”. Po ich usunięciu znika też potrzeba importu `shlex`, `tempfile`, `stat` i większości wywołań `platform.system()`.
+- **Nieużywany `import time`** (potwierdza `pyflakes`).
+- **Motywy zdefiniowane w dwóch miejscach**: `apply_theme` i `apply_ui_theme`, do tego lista `is_dark` wpisana na sztywno. Jeden słownik `THEMES` z kompletem kolorów usunie duplikację i ryzyko rozjazdu.
+- **Motyw nakładany dwa razy przy starcie** (`PythonEditor.__init__` → „Jasny”, potem `change_theme`), a `change_theme` przy każdym starcie zapisuje `config.json` (to właśnie powoduje nadpisanie uszkodzonej konfiguracji z punktu 4).
+- **Nadmiarowe zapisy:** każdy zapis pliku zapisuje też `config.json` (`add_to_recent`); F5 na nowym pliku zapisuje plik i konfigurację dwukrotnie (`save_as_file` + `save_file`) – test: 2 zapisy `config.json` na jedno F5.
+- `lexer.setDefaultFont(font)` jest zbędne od 1.0.6.11 (baza `lexer.setFont(font)` dla wszystkich stylów); w słowniku `styles` czcionkę wystarczy podawać tylko dla stylów pogrubionych.
+- `getattr(self, '_original_encoding', 'utf-8')` – zbędne, atrybut jest zawsze ustawiany w `__init__`.
+- Zbędne nawiasy w `key_text == '.' or (key_text.isalnum() or key_text == '_')`.
+- Lepiej przekazywać `line` i `index` w sygnale `result_ready` niż odczytywać je przez `self.sender()`.
+- `except Exception` w `resource_path` lepiej zawęzić do `AttributeError`.
+- `_context_at_cursor` na końcu pliku buduje cały tekst (`self.text()[-1:]`) przy każdym naciśnięciu klawisza – wystarczy `SendScintilla(SCI_GETCHARAT, pos - 1)`. Wpływ na wydajność pomijalny (zmierzone: < 1 ms na plik 20 000 linii), ale to prosta zmiana.
+- **Lista ostatnich plików:** pokazuje tylko nazwę (dwa `main.py` z różnych folderów są nie do odróżnienia – warto dodać tooltip z pełną ścieżką); porównanie ścieżek rozróżnia wielkość liter, a Windows nie (`os.path.normcase` przy porównaniu).
+- Domyślny folder `~/Documents` może nie istnieć przy przekierowaniu do OneDrive (`OneDrive\Dokumenty`) – lepiej `QStandardPaths.writableLocation(QStandardPaths.StandardLocation.DocumentsLocation)`.
 
 Wrapper `select_all` **nie jest** nadmiarowy i powinien zostać. Sygnał `triggered` przekazuje `checked=False`, więc bezpośrednie podpięcie `editor.selectAll` odznaczałoby tekst zamiast go zaznaczać.
+
+---
+
+## Do sprawdzenia na Windows (nie dało się przetestować w tym środowisku)
+
+- [ ] **Explorer `/select` ze spacjami w ścieżce** (Classroom, Gmail z załącznikiem) – sprawdzona tylko postać linii poleceń.
+- [ ] **Runner F5 z prawdziwym `msvcrt`**: program `import sys; sys.stdin.close(); 1/0` oraz program kończący się `exit()` – okno powinno czekać na klawisz.
+- [ ] **Podpowiedzi z bibliotek ucznia w zbudowanym .exe** (nowy skrypt `Budowanie_EXE_mkPyEdek.bat`): `import pygame` → `pygame.`; istnienie `dist\mkPyEdek\_internal\jedi\inference\compiled\subprocess\__main__.py`.
+- [ ] **Środowisko Jedi z launcherem `py.exe`** – autodetekcja w Windows wybiera najpierw `py`; działanie Jedi z launcherem nie było testowane.
+- [ ] **Wersja w `wersja.txt`** zgodna z `VERSION` w kodzie.
