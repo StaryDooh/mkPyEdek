@@ -38,7 +38,9 @@ Cały zestaw testów regresji przechodzi na wersji 1.0.8.0 – żadna z wcześni
 
 ## 🔴 Błędy realne
 
-### 1. Runner F5 połyka komunikat z `sys.exit("…")`
+### ~~1. Runner F5 połyka komunikat z `sys.exit("…")`~~
+
+> Rozwiązane w 1.0.8.1: runner wypisuje na stderr tekst przekazany do `sys.exit()` / `raise SystemExit(...)`, tak jak zwykły Python. Test porównawczy (9 wariantów: `sys.exit()`, `sys.exit(0)`, `sys.exit(3)`, `sys.exit("tekst")`, `sys.exit([lista])`, `raise SystemExit("…")`, `exit()`, zwykły program, błąd) – wyjście identyczne jak przy `python plik.py`.
 
 `except SystemExit: pass` ignoruje treść wyjątku. Zwykły Python wypisuje tekst przekazany do `sys.exit()` – w mkPyEdek uczeń nie widzi nic.
 
@@ -57,7 +59,9 @@ Poprawka w tekście runnera (`_launch_process`):
 "        print(e.code, file=sys.stderr)\n"
 ```
 
-### 2. Otwarcie i zapis pliku binarnego niszczy go
+### ~~2. Otwarcie i zapis pliku binarnego niszczy go~~
+
+> Rozwiązane w 1.0.8.2: pliki z bajtem `0x00` w pierwszych 8 KB (PNG, ZIP, EXE, PYC…) są odrzucane komunikatem „Nieobsługiwany plik” – edytor, lista ostatnich i plik na dysku pozostają nienaruszone. Wyjątek: tekst UTF-16 z BOM (Notatnik → „Unicode”) jest wczytywany poprawnie i przy zapisie, po pytaniu, konwertowany do UTF-8. Pliki > 2 MB wymagają potwierdzenia (stała `LARGE_FILE_WARN_BYTES`).
 
 Filtr „Wszystkie pliki (*)” pozwala otworzyć dowolny plik. Od 1.0.7.1 kodowanie `iso-8859-2` przyjmuje każdy ciąg bajtów, więc np. obrazek PNG wczytuje się jako „tekst”. Przy zapisie pada tylko standardowe pytanie „Plik był oryginalnie zapisany w kodowaniu ISO-8859-2…” – po kliknięciu „Tak” plik zostaje zapisany w UTF-8 i **jest uszkodzony** (test: PNG po zapisie różni się od oryginału).
 

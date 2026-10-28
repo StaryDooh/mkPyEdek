@@ -532,7 +532,7 @@ class PythonEditor(QsciScintilla):
 # GŁÓWNA KLASA APLIKACJI
 # ─────────────────────────────────────────────────────────────────────────────
 class MkPyEdekGUI(QMainWindow):
-    VERSION = "1.0.8.0"
+    VERSION = "1.0.8.2"
 
     def __init__(self, file_to_open=None):
         super().__init__()
@@ -1048,24 +1048,58 @@ class MkPyEdekGUI(QMainWindow):
             if file_name:
                 self.open_specific_file(file_name)
 
+    # Pliki większe niż ten próg wymagają potwierdzenia przed otwarciem
+    LARGE_FILE_WARN_BYTES = 2 * 1024 * 1024
+
     def open_specific_file(self, file_path):
         file_path = os.path.abspath(file_path)
         if os.path.exists(file_path):
             try:
+                # Bardzo duży plik to dla ucznia prawie zawsze pomyłka (a edytor i Jedi zwalniają)
+                size = os.path.getsize(file_path)
+                if size > self.LARGE_FILE_WARN_BYTES:
+                    reply = QMessageBox.question(
+                        self, "Duży plik",
+                        f"Plik {os.path.basename(file_path)} ma {size / 1024 / 1024:.1f} MB.\n"
+                        "Tak duże pliki zwykle nie są programami ucznia, a edytor może działać wolno.\n\n"
+                        "Czy na pewno chcesz go otworzyć?",
+                        QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+                        QMessageBox.StandardButton.No
+                    )
+                    if reply != QMessageBox.StandardButton.Yes:
+                        return
+
                 with open(file_path, 'rb') as f:
                     raw = f.read()
+
+                content, detected_enc = None, 'utf-8'
+                # UTF-16 z BOM (np. Notatnik → „Unicode”) – to tekst, mimo bajtów 0x00
+                if raw.startswith((codecs.BOM_UTF16_LE, codecs.BOM_UTF16_BE)):
+                    try:
+                        content, detected_enc = raw.decode('utf-16'), 'utf-16'
+                    except UnicodeDecodeError:
+                        content = None
+
+                # Plik binarny (obraz, archiwum, .exe…) – bajt 0x00 nie występuje w tekście.
+                # Otwarcie i zapis takiego pliku jako tekstu bezpowrotnie by go uszkodziły.
+                if content is None and b'\x00' in raw[:8192]:
+                    QMessageBox.warning(
+                        self, "Nieobsługiwany plik",
+                        f"Plik {os.path.basename(file_path)} nie jest plikiem tekstowym "
+                        "i nie może być edytowany w mkPyEdek.")
+                    return
 
                 # Kolejność prób: UTF-8 → Windows-1250 → ISO-8859-2.
                 # ISO-8859-2 dekoduje każdy ciąg bajtów, więc pętla zawsze kończy się sukcesem
                 # i żaden bajt pliku nie jest zastępowany znakiem „�” (brak cichej utraty danych).
-                content, detected_enc = None, 'utf-8'
-                for enc in ('utf-8', 'cp1250', 'iso-8859-2'):
-                    try:
-                        content = raw.decode(enc)
-                        detected_enc = enc
-                        break
-                    except UnicodeDecodeError:
-                        continue
+                if content is None:
+                    for enc in ('utf-8', 'cp1250', 'iso-8859-2'):
+                        try:
+                            content = raw.decode(enc)
+                            detected_enc = enc
+                            break
+                        except UnicodeDecodeError:
+                            continue
                 # Końce linii pozostają bez zmian (decode nie zamienia \r\n), co pozwala wykryć styl CRLF/LF.
 
                 self._original_encoding = detected_enc
@@ -1248,7 +1282,11 @@ class MkPyEdekGUI(QMainWindow):
                     "path = sys.argv[1]; sys.argv = sys.argv[1:]\n"
                     "sys.path.insert(0, os.path.dirname(path))\n"
                     "try:\n    runpy.run_path(path, run_name='__main__')\n"
-                    "except SystemExit:\n    pass\n"
+                    # sys.exit("tekst") – Python wypisuje tekst na stderr; runner musi zrobić to samo.
+                    # sys.exit(), sys.exit(0) i sys.exit(liczba) kończą program bez komunikatu.
+                    "except SystemExit as e:\n"
+                    "    if e.code is not None and not isinstance(e.code, int):\n"
+                    "        print(e.code, file=sys.stderr)\n"
                     "except BaseException:\n    traceback.print_exc()\n"
                     "finally:\n"
                     "    try:\n"

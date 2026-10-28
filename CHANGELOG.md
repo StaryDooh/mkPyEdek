@@ -2,6 +2,24 @@
 
 ---
 
+## [1.0.8.2]
+
+### Naprawione (Fixed)
+- **Ochrona plików binarnych:** Pliki, które nie są tekstem (obrazy, archiwa, programy .exe, skompilowane .pyc), nie są otwierane – pojawia się komunikat „Nieobsługiwany plik”. Wcześniej taki plik otwarty przez „Wszystkie pliki” i zapisany ulegał nieodwracalnemu uszkodzeniu.
+
+### Dodane (Added)
+- **Pliki UTF-16:** Pliki zapisane w Notatniku jako „Unicode” (UTF-16 z BOM) są poprawnie wczytywane; przy zapisie, po potwierdzeniu, konwertowane do UTF-8, które jest wymagane przez Pythona.
+- **Ostrzeżenie o dużym pliku:** Otwarcie pliku większego niż 2 MB wymaga potwierdzenia.
+
+---
+
+## [1.0.8.1]
+
+### Naprawione (Fixed)
+- **Komunikat z `sys.exit()` (F5):** Tekst przekazany do `sys.exit("…")` lub `raise SystemExit("…")` jest wyświetlany w oknie konsoli, tak jak przy zwykłym uruchomieniu `python plik.py`. Wcześniej był pomijany i uczeń nie widział komunikatu kończącego program. Zakończenie bez tekstu (`sys.exit()`, `sys.exit(0)`, kod liczbowy) działa jak dotąd – bez komunikatu.
+
+---
+
 ## [1.0.8.0]
 
 ### Naprawione (Fixed)
