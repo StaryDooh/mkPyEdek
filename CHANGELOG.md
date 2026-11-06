@@ -2,6 +2,54 @@
 
 ---
 
+## [2.0.1.0]
+
+### Naprawione (Fixed)
+- **Uszkodzony plik konfiguracji:** Zamiast po cichu nadpisywać ustawienia wartościami domyślnymi, program zachowuje uszkodzony plik jako `config.json.bak` (z wpisem w `app.log`) i odzyskuje z niego listę ostatnich plików, motyw, ostatni folder i wskazany interpreter – także gdy plik jest ucięty.
+- **Błędne wartości w konfiguracji** (np. nieznany motyw, nieprawidłowy wpis na liście plików) są pomijane pojedynczo, bez utraty pozostałych ustawień.
+
+---
+
+## [2.0.0.0]
+
+### Naprawione (Fixed)
+- **Bezpieczny zapis plików:** Plik jest zapisywany najpierw do pliku tymczasowego w tym samym folderze, a dopiero po pełnym zapisie podmieniany. Błąd w trakcie zapisu (pełny dysk, utrata połączenia z dyskiem sieciowym lub OneDrive, brak uprawnień) nie niszczy już poprzedniej wersji pliku – wcześniej na dysku zostawał ucięty fragment.
+- **Chwilowe blokady pliku:** Gdy podmianę pliku chwilowo blokuje antywirus lub synchronizacja OneDrive, zapis jest automatycznie ponawiany.
+- **`config.json`** jest zapisywany w ten sam bezpieczny sposób.
+
+### Zmienione (Changed)
+- Komunikat o nieudanym zapisie informuje, że poprzednia wersja pliku pozostała bez zmian, i podpowiada „Zapisz jako…”; błąd jest zapisywany w `app.log`.
+
+Wydanie zbiorcze – podsumowanie zmian z wersji 1.0.6.3–1.0.8.3 (szczegóły poniżej).
+
+### Bezpieczeństwo danych
+- Bezpieczny (atomowy) zapis plików i konfiguracji – błąd zapisu nie niszczy poprzedniej wersji pliku.
+- Ctrl+Z po otwarciu pliku nie przywraca już treści poprzedniego pliku.
+- Pliki binarne nie są otwierane; pliki w nietypowych kodowaniach i UTF-16 wczytują się bez strat.
+- Zachowanie końców linii Windows (CRLF) i poprawianie deklaracji kodowania przy zapisie w UTF-8.
+
+### Uruchamianie programów (F5)
+- Walidacja interpretera Pythona (konfiguracja, autodetekcja, „Wskaż plik”) i czytelny komunikat przy jego braku.
+- Okno konsoli nie znika po `exit()` ani po zamknięciu wejścia; komunikaty z `sys.exit("…")` są widoczne.
+- Dokładne wskazanie miejsca błędu składni (linia i kolumna).
+
+### Edycja i podpowiedzi
+- Podpowiedzi z bibliotek zainstalowanych przez ucznia i z modułów w folderze pliku.
+- Brak nachalnych podpowiedzi w komentarzach, napisach i liczbach; poprawne nawiasy, cudzysłowy i `"""`.
+- Spójne „Znajdź”, F3 i „Zamień”; „Zamień wszystko” zachowuje położenie kursora.
+- Pełne kolorowanie składni we wszystkich motywach (f-stringi, dekoratory, komentarze `##`).
+
+### Udostępnianie
+- Classroom i Gmail tylko po udanym zapisie; Eksplorator zaznacza plik także przy spacjach w ścieżce.
+- Długi kod wysyłany przez Gmail jako załącznik `.py`.
+
+### Inne
+- Bezpieczne zamykanie programu w trakcie pracy autouzupełniania.
+- Komunikat o brakującym pliku z listy ostatnich lub linii poleceń.
+- Budowanie .exe dołącza źródła `jedi` i `parso`.
+
+---
+
 ## [1.0.8.2]
 
 ### Naprawione (Fixed)

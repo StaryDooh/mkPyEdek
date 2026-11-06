@@ -11,6 +11,7 @@ import json
 import urllib.parse
 import logging
 import shlex
+import tempfile
 import time
 import traceback
 import threading
@@ -98,6 +99,35 @@ def global_exception_handler(exctype, value, tb):
         _in_handler = False
 
 sys.excepthook = global_exception_handler
+
+def atomic_write_text(path, text, encoding='utf-8', newline=None, retries=5):
+    """Bezpieczny zapis pliku tekstowego: najpierw do pliku tymczasowego w tym samym folderze,
+    potem atomowa podmiana (os.replace). Przy jakimkolwiek błędzie (pełny dysk, zerwane połączenie
+    z dyskiem sieciowym, brak uprawnień) oryginalny plik pozostaje nietknięty, a plik tymczasowy
+    jest usuwany. Wyjątek jest przekazywany dalej, aby wywołujący mógł pokazać komunikat."""
+    folder = os.path.dirname(os.path.abspath(path)) or '.'
+    fd, tmp = tempfile.mkstemp(prefix='~' + os.path.basename(path) + '.', suffix='.tmp', dir=folder)
+    try:
+        with os.fdopen(fd, 'w', encoding=encoding, newline=newline) as f:
+            f.write(text)
+            f.flush()
+            os.fsync(f.fileno())          # dane fizycznie na dysku przed podmianą
+        # W Windows podmianę może chwilowo blokować antywirus, indeksowanie lub OneDrive
+        for attempt in range(retries):
+            try:
+                os.replace(tmp, path)
+                return
+            except PermissionError:
+                if attempt == retries - 1:
+                    raise
+                time.sleep(0.1)
+    except BaseException:
+        try:
+            os.remove(tmp)
+        except OSError:
+            pass
+        raise
+
 
 def resource_path(relative_path):
     try:
@@ -532,7 +562,7 @@ class PythonEditor(QsciScintilla):
 # GŁÓWNA KLASA APLIKACJI
 # ─────────────────────────────────────────────────────────────────────────────
 class MkPyEdekGUI(QMainWindow):
-    VERSION = "1.0.8.2"
+    VERSION = "2.0.1.0"
 
     def __init__(self, file_to_open=None):
         super().__init__()
@@ -575,35 +605,97 @@ class MkPyEdekGUI(QMainWindow):
                 return path
         return None
 
+    THEMES = ("Jasny", "Ciemny", "Kontrastowy", "Monokai", "Solarized Light", "Oceanic")
+    CONFIG_BACKUP = CONFIG_FILE + ".bak"
+
+    @staticmethod
+    def _salvage_config(text):
+        """Odzyskuje z uszkodzonego (np. uciętego) config.json to, co się da:
+        kompletną listę ostatnich plików, motyw i ostatni folder."""
+        data = {}
+        # Lista ostatnich plików: wszystkie KOMPLETNE ścieżki, także gdy lista jest ucięta
+        m = re.search(r'"recent_files"\s*:\s*\[([^\]]*)', text, re.S)
+        if m:
+            paths = []
+            for s in re.findall(r'"(?:[^"\\]|\\.)*"', m.group(1)):
+                try:
+                    paths.append(json.loads(s))
+                except ValueError:
+                    pass
+            if paths:
+                data["recent_files"] = paths
+        for key in ("theme", "last_dir", "python_cmd"):
+            m = re.search(r'"%s"\s*:\s*("(?:[^"\\]|\\.)*")' % key, text)
+            if m:
+                try:
+                    data[key] = json.loads(m.group(1))
+                except ValueError:
+                    pass
+        return data
+
+    def _read_config_file(self):
+        """Zwraca słownik ustawień. Uszkodzony plik jest odkładany jako config.json.bak
+        (do diagnozy), a z jego treści odzyskiwane są możliwe do odczytania ustawienia."""
+        try:
+            with open(CONFIG_FILE, 'r', encoding='utf-8') as f:
+                text = f.read()
+        except (OSError, UnicodeDecodeError) as e:
+            logging.warning(f"Nie udało się odczytać konfiguracji: {e}")
+            text = None
+            error = e
+        else:
+            try:
+                data = json.loads(text)
+                if isinstance(data, dict):
+                    return data
+                error = ValueError("plik nie zawiera obiektu JSON")
+            except ValueError as e:
+                error = e
+
+        # Plik uszkodzony – zachowaj go do diagnozy, zanim zostanie nadpisany przy zapisie
+        try:
+            os.replace(CONFIG_FILE, self.CONFIG_BACKUP)
+            logging.warning(f"Uszkodzony plik konfiguracji ({error}) – zachowano kopię: {self.CONFIG_BACKUP}")
+        except OSError as e:
+            logging.warning(f"Uszkodzony plik konfiguracji ({error}); nie udało się zachować kopii: {e}")
+        data = self._salvage_config(text) if text else {}
+        if data:
+            logging.warning(f"Z uszkodzonej konfiguracji odzyskano: {', '.join(sorted(data))}")
+        self._config_recovered = True
+        return data
+
     def load_config(self):
         invalid_stored_cmd = False
+        self._config_recovered = False
         if os.path.exists(CONFIG_FILE):
-            try:
-                with open(CONFIG_FILE, 'r', encoding='utf-8') as f:
-                    data = json.load(f)
-                    self.recent_files = data.get("recent_files", [])
-                    self.current_theme = data.get("theme", "Jasny")
-                    stored_dir = data.get("last_dir", "")
-                    if stored_dir and os.path.isdir(stored_dir):
-                        self.last_dir = stored_dir
-                    
-                    stored_cmd = data.get("python_cmd", "")
-                    if stored_cmd:
-                        if self._is_valid_python(stored_cmd):
-                            self.python_cmd = stored_cmd
-                            self._manual_python_cmd = True
-                        else:
-                            # Błędny wpis (np. zła ścieżka) – porzuć go i wróć do autodetekcji
-                            logging.warning(f"Pominięto nieprawidłowy interpreter z konfiguracji: {stored_cmd!r}")
-                            invalid_stored_cmd = True
-            except Exception as e:
-                logging.warning(f"Nie udało się wczytać konfiguracji: {e}")
+            data = self._read_config_file()
+
+            # Kontrola typów – błędne wartości są pomijane pojedynczo, a nie całą konfiguracją
+            recent = data.get("recent_files", [])
+            if isinstance(recent, list):
+                self.recent_files = [p for p in recent if isinstance(p, str) and p][:10]
+            theme = data.get("theme", "Jasny")
+            if theme in self.THEMES:
+                self.current_theme = theme
+            stored_dir = data.get("last_dir", "")
+            if isinstance(stored_dir, str) and stored_dir and os.path.isdir(stored_dir):
+                self.last_dir = stored_dir
+
+            stored_cmd = data.get("python_cmd", "")
+            if stored_cmd:
+                if isinstance(stored_cmd, str) and self._is_valid_python(stored_cmd):
+                    self.python_cmd = stored_cmd
+                    self._manual_python_cmd = True
+                else:
+                    # Błędny wpis (np. zła ścieżka) – porzuć go i wróć do autodetekcji
+                    logging.warning(f"Pominięto nieprawidłowy interpreter z konfiguracji: {stored_cmd!r}")
+                    invalid_stored_cmd = True
 
         if not self.python_cmd:
             self.python_cmd = self._detect_python()
 
-        if invalid_stored_cmd:
-            # Usuń błędny wpis z config.json, aby nie był sprawdzany przy każdym starcie
+        if invalid_stored_cmd or self._config_recovered:
+            # Zapisz poprawną konfigurację (z odzyskanymi ustawieniami) w miejsce błędnej
             self.save_config()
 
     def save_config(self):
@@ -616,8 +708,7 @@ class MkPyEdekGUI(QMainWindow):
             if self._manual_python_cmd and self.python_cmd:
                 config_data["python_cmd"] = self.python_cmd
 
-            with open(CONFIG_FILE, 'w', encoding='utf-8') as f:
-                json.dump(config_data, f, ensure_ascii=False, indent=4)
+            atomic_write_text(CONFIG_FILE, json.dumps(config_data, ensure_ascii=False, indent=4))
         except Exception as e:
             logging.warning(f"Nie udało się zapisać konfiguracji: {e}")
 
@@ -752,7 +843,7 @@ class MkPyEdekGUI(QMainWindow):
 
         theme_menu = menubar.addMenu("Motyw")
         theme_group = QActionGroup(self)
-        for t_name in ["Jasny", "Ciemny", "Kontrastowy", "Monokai", "Solarized Light", "Oceanic"]:
+        for t_name in self.THEMES:
             action = QAction(t_name, self, checkable=True)
             if t_name == self.current_theme: action.setChecked(True)
             action.triggered.connect(lambda checked, t=t_name: self.change_theme(t))
@@ -1148,8 +1239,9 @@ class MkPyEdekGUI(QMainWindow):
             self._fix_coding_declaration()
 
             try:
-                with open(self.current_file, 'w', encoding='utf-8', newline='') as f:
-                    f.write(self.editor.text())
+                # Zapis atomowy: przy błędzie (np. pełny dysk, utrata połączenia z dyskiem
+                # sieciowym) poprzednia wersja pliku zostaje nienaruszona
+                atomic_write_text(self.current_file, self.editor.text(), newline='')
                 # Zmiana kodowania dopiero po udanym zapisie – po błędzie pytanie padnie ponownie
                 self._original_encoding = 'utf-8'
                 self.editor.setModified(False)
@@ -1157,7 +1249,11 @@ class MkPyEdekGUI(QMainWindow):
                 self.update_title()
                 return True
             except Exception as e:
-                QMessageBox.critical(self, "Błąd", f"Nie można zapisać pliku:\n{e}")
+                logging.warning(f"Nie udało się zapisać pliku {self.current_file}: {e}")
+                QMessageBox.critical(self, "Błąd",
+                    f"Nie można zapisać pliku:\n{e}\n\n"
+                    "Poprzednia wersja pliku na dysku nie została zmieniona. "
+                    "Spróbuj ponownie lub użyj „Zapisz jako…”, aby zapisać plik w innym miejscu.")
                 return False
         return self.save_as_file()
 
