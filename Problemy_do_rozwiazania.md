@@ -80,7 +80,9 @@ Warto też ostrzegać przy bardzo dużych plikach (np. > 2 MB) – edytor i Jedi
 
 ## 🟠 Nieścisłości i błędy brzegowe
 
-### 3. Zapis pliku nie jest atomowy – błąd w trakcie zapisu niszczy pracę ucznia
+### ~~3. Zapis pliku nie jest atomowy – błąd w trakcie zapisu niszczy pracę ucznia~~
+
+> Rozwiązane w 1.0.8.3: funkcja `atomic_write_text()` (plik tymczasowy `~nazwa.*.tmp` w tym samym folderze → `fsync` → `os.replace`, do 5 prób przy chwilowej blokadzie przez antywirus/OneDrive, sprzątanie pliku tymczasowego przy błędzie). Używana dla plików ucznia i `config.json`. Testy: pełny dysk, błąd `fsync`, trwała i chwilowa blokada podmiany – oryginał zawsze nietknięty, brak pozostałości. W punkcie 4 pozostaje część „kopia `config.json.bak` przy błędzie odczytu”.
 
 `open(..., 'w')` najpierw czyści plik, a dopiero potem zapisuje treść. Test z symulowanym błędem zapisu (np. pełny dysk, zerwane połączenie z dyskiem sieciowym/OneDrive): komunikat „Nie można zapisać pliku” pojawia się poprawnie, ale na dysku zostaje **ucięty fragment** (`'y = 2\ny = '`) – poprzednia wersja pliku przepadła. W szkołach z dyskami sieciowymi (H:) to realne ryzyko.
 
@@ -94,7 +96,9 @@ os.replace(tmp, self.current_file)      # atomowa podmiana; przy błędzie orygi
 
 (Przy błędzie usunąć `.tmp` w `except`.) Ten sam wzorzec dla `config.json` – patrz punkt 4.
 
-### 4. Uszkodzony `config.json` kasuje ustawienia i listę ostatnich plików
+### ~~4. Uszkodzony `config.json` kasuje ustawienia i listę ostatnich plików~~
+
+> Rozwiązane w 2.0.1.0: uszkodzony plik jest przenoszony do `config.json.bak` (wpis w `app.log`), a z jego treści odzyskiwane są kompletne ścieżki listy ostatnich, motyw, ostatni folder i interpreter. Wartości złego typu (np. nieznany motyw, liczba na liście plików) są pomijane pojedynczo. Zapis atomowy – od 1.0.8.3. Przetestowano 10 przypadków (ucięty plik, pusty, binarny, JSON innego typu, złe typy, ścieżki Windows z polskimi znakami).
 
 Test: ucięty plik konfiguracji (`{"recent_files": [...], "theme": "Ciemny", `). Po starcie: motyw „Jasny”, lista ostatnich pusta, a `config.json` zostaje od razu **nadpisany wartościami domyślnymi** (zapis wymusza `change_theme` przy starcie). Uczeń traci listę ostatnich plików i nie da się tego odtworzyć.
 
