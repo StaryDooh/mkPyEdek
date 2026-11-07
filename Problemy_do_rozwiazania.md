@@ -104,7 +104,9 @@ Test: ucięty plik konfiguracji (`{"recent_files": [...], "theme": "Ciemny", `).
 
 Poprawka: przy błędzie odczytu zmienić nazwę pliku na `config.json.bak` (do diagnozy) i zapisywać konfigurację atomowo (jak w punkcie 3).
 
-### 5. Lista podpowiedzi zaczyna się od stałych i nazw z podkreśleniem
+### ~~5. Lista podpowiedzi zaczyna się od stałych i nazw z podkreśleniem~~
+
+> Rozwiązane w 2.0.2.0 (oba warianty): lista w kolejności Jedi (`SCI_AUTOCSETORDER = SC_ORDER_CUSTOM`), nazwy zaczynające się od `_` ukryte, dopóki uczeń sam nie zacznie pisać od `_`. Test: `os.` → `abc, abort, access…`; `moj_modul.` → `policz_srednia, Rysuj, STALA`; `os._` → nazwy prywatne; dopasowywanie podczas pisania i wstawianie Enterem działają.
 
 `showUserList(1, sorted(names))` sortuje alfabetycznie według kodów znaków: WIELKIE LITERY < `_` < małe litery. Test `os.`: Jedi zwraca `abc, abort, access, …`, a edytor pokazuje `CLD_CONTINUED, CLD_DUMPED, CLD_EXITED, …`; po `moj_modul.` pierwsze są `__doc__`, `__file__`, `__name__`. Dla początkującego to najmniej przydatne pozycje.
 
@@ -118,7 +120,9 @@ if not word_part.startswith('_'):
 self.SendScintilla(QsciScintilla.SCI_AUTOCSETORDER, QsciScintilla.SC_ORDER_CUSTOM)
 ```
 
-### 6. Parowanie nawiasów i cudzysłowów przed istniejącym tekstem
+### ~~6. Parowanie nawiasów i cudzysłowów przed istniejącym tekstem~~
+
+> Rozwiązane w 2.0.3.0: znak zamykający jest dostawiany tylko, gdy za kursorem jest koniec linii, odstęp albo jeden z `)]}:,;` (stała `_PAIR_ALLOWED_BEFORE`). W komentarzach i napisach nawiasy nie są parowane; wyjątek: `{` w f-stringu (także tuż przed zamykającym cudzysłowem). Test: 18/18 przypadków, regresja punktu 17 (nachalność) 24/24 – zmieniony jedyny przypadek „nawias w komentarzu” (teraz bez parowania, zgodnie z założeniem).
 
 Nawias/cudzysłów jest parowany zawsze, także tuż przed literą – typowa sytuacja przy poprawianiu kodu:
 

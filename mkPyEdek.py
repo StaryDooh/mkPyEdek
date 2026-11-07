@@ -250,6 +250,10 @@ class PythonEditor(QsciScintilla):
         self._debounce.timeout.connect(self._run_jedi)
 
         self.userListActivated.connect(self.on_user_list_activated)
+        # Lista podpowiedzi w kolejności podanej przez Jedi (Scintilla domyślnie wymaga listy
+        # posortowanej według kodów znaków, przez co WIELKIE_STAŁE i __nazwy trafiały na górę).
+        # Przy SC_ORDER_CUSTOM Scintilla sama buduje indeks do dopasowywania podczas pisania.
+        self.SendScintilla(QsciScintilla.SCI_AUTOCSETORDER, QsciScintilla.SC_ORDER_CUSTOM)
         self.apply_theme("Jasny")
 
     def apply_theme(self, theme_name):
@@ -373,10 +377,28 @@ class PythonEditor(QsciScintilla):
                 self.replaceSelectedText(key_text + sel + pairs[key_text])
                 return
 
+            full_line = self.text(line)
+            before = full_line[:index]
+            next_char = full_line[index:index + 1]
+            # Parujemy tylko wtedy, gdy za kursorem nie ma „doklejonego” tekstu – inaczej
+            # poprawianie kodu (np. dopisanie „(” przed „x”) dawałoby „(|)x”.
+            free_after = next_char in self._PAIR_ALLOWED_BEFORE
+
+            if key_text in ('(', '[', '{'):
+                context = self._context_at_cursor()
+                if context is not None:
+                    # W komentarzu i w napisie nawias to zwykły znak (np. uśmiech „:(”).
+                    # Wyjątek: „{” w f-stringu otwiera wyrażenie, więc tam parujemy,
+                    # także tuż przed zamykającym cudzysłowem.
+                    in_fstring = self._style_before_cursor() in self._FSTRING_STYLES
+                    if not (key_text == '{' and in_fstring and (free_after or next_char in '"\'')):
+                        super().keyPressEvent(event)
+                        return
+                elif not free_after:
+                    super().keyPressEvent(event)
+                    return
+
             if key_text in ['"', "'"]:
-                full_line = self.text(line)
-                before = full_line[:index]
-                next_char = full_line[index:index + 1]
                 if next_char == key_text:
                     self.setCursorPosition(line, index + 1)
                     return
@@ -391,7 +413,7 @@ class PythonEditor(QsciScintilla):
                 # Tak samo po literze/cyfrze, chyba że to prefiks napisu: f"", r'', b"", rb'' itp.
                 word_before = self.get_word_before_cursor(line, index)
                 after_word = bool(before) and (before[-1].isalnum() or before[-1] == '_')
-                if (self._context_at_cursor() is not None or
+                if (not free_after or self._context_at_cursor() is not None or
                         (after_word and word_before.lower() not in self._STRING_PREFIXES)):
                     super().keyPressEvent(event)
                     return
@@ -428,6 +450,13 @@ class PythonEditor(QsciScintilla):
         QsciLexerPython.UnclosedString,
     })
     _STRING_PREFIXES = frozenset({'f', 'r', 'b', 'u', 'rb', 'br', 'fr', 'rf'})
+    _FSTRING_STYLES = frozenset({
+        QsciLexerPython.DoubleQuotedFString, QsciLexerPython.SingleQuotedFString,
+        QsciLexerPython.TripleSingleQuotedFString, QsciLexerPython.TripleDoubleQuotedFString,
+    })
+    # Znaki za kursorem, przed którymi wolno dostawić znak zamykający:
+    # koniec linii/pliku, odstęp i znaki zamykające lub rozdzielające
+    _PAIR_ALLOWED_BEFORE = frozenset({'', '\r', '\n', ' ', '\t', ')', ']', '}', ':', ',', ';'})
 
     def _style_at(self, pos):
         return self.SendScintilla(QsciScintilla.SCI_GETSTYLEAT, pos)
@@ -532,9 +561,18 @@ class PythonEditor(QsciScintilla):
             return
         if not names or (t.line, t.index) != self.getCursorPosition():
             return
-        
+
+        # Nazwy prywatne i specjalne (_x, __doc__…) są dla początkującego najmniej przydatne –
+        # pokazujemy je dopiero, gdy uczeń sam zacznie pisać od „_”.
+        word_part = self.get_word_before_cursor(t.line, t.index)
+        if not word_part.startswith('_'):
+            names = [n for n in names if not n.startswith('_')] or names
+        # Kolejność z Jedi (alfabetyczna bez rozróżniania wielkości liter, „_” na końcu);
+        # dict.fromkeys usuwa ewentualne duplikaty, zachowując kolejność.
+        names = list(dict.fromkeys(names))
+
         self.current_completions = names
-        self.showUserList(1, sorted(names))
+        self.showUserList(1, names)
 
     def _on_jedi_finished(self):
         self._jedi_thread = None
@@ -562,7 +600,7 @@ class PythonEditor(QsciScintilla):
 # GŁÓWNA KLASA APLIKACJI
 # ─────────────────────────────────────────────────────────────────────────────
 class MkPyEdekGUI(QMainWindow):
-    VERSION = "2.0.1.0"
+    VERSION = "2.0.3.0"
 
     def __init__(self, file_to_open=None):
         super().__init__()

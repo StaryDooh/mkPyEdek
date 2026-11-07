@@ -2,6 +2,22 @@
 
 ---
 
+## [2.0.3.0]
+
+### Naprawione (Fixed)
+- **Parowanie przy poprawianiu kodu:** Nawias lub cudzysłów zamykający jest dostawiany tylko wtedy, gdy za kursorem jest koniec linii, odstęp albo znak zamykający lub rozdzielający (`) ] } : , ;`). Dopisanie „(” przed istniejącym tekstem nie daje już „()x”.
+- **Nawiasy w komentarzach i napisach** są wstawiane pojedynczo (np. `":("`); wyjątkiem jest `{` w f-stringach, które nadal otrzymuje parę `{}`.
+
+---
+
+## [2.0.2.0]
+
+### Zmienione (Changed)
+- **Kolejność podpowiedzi:** Lista podpowiedzi jest uporządkowana alfabetycznie bez rozróżniania wielkości liter (kolejność z Jedi) – stałe pisane WIELKIMI LITERAMI nie trafiają już na początek listy.
+- **Ukryte nazwy specjalne:** Nazwy zaczynające się od podkreślenia (`_prywatne`, `__doc__`, `__init__`…) pojawiają się dopiero, gdy uczeń sam zacznie pisać od „_”.
+
+---
+
 ## [2.0.1.0]
 
 ### Naprawione (Fixed)
