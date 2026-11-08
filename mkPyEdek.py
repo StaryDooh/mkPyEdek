@@ -3,24 +3,57 @@ import os
 import re
 import codecs
 import subprocess
-import jedi
 import webbrowser
 import platform
-import shutil
 import json
 import urllib.parse
 import logging
+import logging.handlers
 import shlex
 import tempfile
 import time
 import traceback
 import threading
 from datetime import datetime
-from PyQt6.QtWidgets import (QApplication, QMainWindow, QFileDialog,
-                             QMessageBox, QWidget, QVBoxLayout, QStyle, QInputDialog)
-from PyQt6.QtGui import QAction, QFont, QColor, QIcon, QActionGroup
-from PyQt6.QtCore import Qt, QThread, pyqtSignal, QTimer
-from PyQt6.Qsci import QsciScintilla, QsciLexerPython
+
+
+# --- KOMUNIKATY BŁĘDÓW PRZED UTWORZENIEM OKNA ---
+# .exe jest budowany z --noconsole: bez okna Qt i bez konsoli błąd startu (brak biblioteki,
+# problem z profilem użytkownika) zamknąłby program bez śladu. Te funkcje używają wyłącznie
+# biblioteki standardowej i systemowego okna komunikatu Windows, więc działają zawsze.
+def _native_error_box(title, text):
+    """Pokazuje komunikat błędu bez użycia Qt (MessageBoxW w Windows, stderr w innych systemach)."""
+    try:
+        if sys.platform == "win32":
+            import ctypes
+            ctypes.windll.user32.MessageBoxW(None, text, title, 0x10 | 0x10000)  # MB_ICONERROR | MB_SETFOREGROUND
+            return
+    except Exception:
+        pass
+    try:
+        print(f"{title}: {text}", file=sys.__stderr__)
+    except Exception:
+        pass
+
+
+def _startup_excepthook(exctype, value, tb, already_logged=False):
+    """Obsługa wyjątków do momentu zainstalowania pełnej obsługi z oknem Qt."""
+    # Logujemy tylko do skonfigurowanego dziennika – samo logging.error() przy braku konfiguracji
+    # utworzyłoby domyślny wpis na stderr, którego w .exe bez konsoli nikt nie zobaczy.
+    if not already_logged and logging.getLogger().handlers:
+        err = "".join(traceback.format_exception(exctype, value, tb))
+        try:
+            logging.error("Błąd podczas uruchamiania programu:\n%s", err)
+        except Exception:
+            pass
+    _native_error_box("mkPyEdek – błąd uruchamiania",
+                      f"Nie udało się uruchomić programu mkPyEdek.\n\n{exctype.__name__}: {value}\n\n"
+                      "Spróbuj zainstalować program ponownie. Jeśli problem się powtarza, "
+                      "zgłoś go autorowi i dołącz treść tego komunikatu.")
+
+
+sys.excepthook = _startup_excepthook
+
 
 # --- KONFIGURACJA ŚCIEŻEK I LOGÓW ---
 if getattr(sys, 'frozen', False):
@@ -28,20 +61,66 @@ if getattr(sys, 'frozen', False):
 else:
     APP_DIR = os.path.dirname(os.path.abspath(__file__))
 
-USER_DIR = os.path.join(os.path.expanduser("~"), ".mkPyEdek")
+def _prepare_user_dir():
+    """Zwraca (folder_ustawień, ostrzeżenie_albo_None).
+
+    Domyślnie %USERPROFILE%\\.mkPyEdek. Gdy nie da się go utworzyć lub zapisać w nim pliku
+    (np. profil mobilny, przekierowany profil na niedostępnym serwerze, brak uprawnień),
+    program używa %LOCALAPPDATA%\\mkPyEdek, a w ostateczności folderu tymczasowego."""
+    candidates = []
+    try:
+        candidates.append(os.path.join(os.path.expanduser("~"), ".mkPyEdek"))
+    except Exception:
+        pass
+    if os.environ.get("LOCALAPPDATA"):
+        candidates.append(os.path.join(os.environ["LOCALAPPDATA"], "mkPyEdek"))
+    candidates.append(os.path.join(tempfile.gettempdir(), "mkPyEdek"))
+
+    problems = []
+    for folder in candidates:
+        try:
+            os.makedirs(folder, exist_ok=True)
+            with tempfile.TemporaryFile(dir=folder):   # sprawdzenie, czy można tu zapisywać
+                pass
+        except Exception as e:
+            problems.append(f"{folder}: {e}")
+            continue
+        if folder == candidates[0]:
+            return folder, None
+        return folder, ("Nie można zapisywać ustawień w folderze " + "; ".join(problems) +
+                        f". Ustawienia i dziennik są zapisywane w: {folder}")
+    # Żaden folder nie działa – program uruchomi się, ale bez zapisu ustawień i dziennika
+    return candidates[-1], "Nie można zapisywać ustawień w żadnym folderze: " + "; ".join(problems)
+
+
+USER_DIR, USER_DIR_WARNING = _prepare_user_dir()
 CONFIG_FILE = os.path.join(USER_DIR, "config.json")
 LOG_FILE = os.path.join(USER_DIR, "app.log")
 RECOVERY_DIR = os.path.join(USER_DIR, "recovery")
 
-os.makedirs(USER_DIR, exist_ok=True)
-
+# Dziennik z rotacją: po przekroczeniu 1 MB app.log → app.log.1 → app.log.2 (starsze są usuwane),
+# więc łącznie zajmuje najwyżej ok. 3 MB. delay=True – plik powstaje dopiero przy pierwszym wpisie.
+try:
+    _log_handler = logging.handlers.RotatingFileHandler(
+        LOG_FILE, maxBytes=1_000_000, backupCount=2, encoding='utf-8', delay=True)
+except Exception:
+    _log_handler = logging.NullHandler()   # brak dziennika nie może blokować startu programu
 logging.basicConfig(
-    filename=LOG_FILE,
-    filemode='a',
     level=logging.WARNING,
     format='%(asctime)s - %(levelname)s - %(message)s',
-    encoding='utf-8'
+    handlers=[_log_handler]
 )
+if USER_DIR_WARNING:
+    logging.warning(USER_DIR_WARNING)
+
+# Biblioteki zewnętrzne importujemy dopiero teraz: błąd ich wczytania (np. uszkodzona instalacja)
+# zostanie zapisany w app.log i pokazany w oknie komunikatu.
+import jedi  # noqa: E402 – po obsłudze błędów startu i dzienniku
+from PyQt6.QtWidgets import (QApplication, QMainWindow, QFileDialog,
+                             QMessageBox, QWidget, QVBoxLayout, QStyle, QInputDialog)
+from PyQt6.QtGui import QAction, QFont, QColor, QIcon, QActionGroup
+from PyQt6.QtCore import Qt, QThread, pyqtSignal, QTimer, QEvent
+from PyQt6.Qsci import QsciScintilla, QsciLexerPython
 
 # --- GLOBALNA OBSŁUGA WYJĄTKÓW ---
 _in_handler = False
@@ -55,9 +134,14 @@ def global_exception_handler(exctype, value, tb):
     
     app = QApplication.instance()
     
-    # Warunki bezpieczeństwa: brak aplikacji, reentrancja lub wywołanie z wątku roboczego
-    if app is None or _in_handler or threading.current_thread() is not threading.main_thread():
-        return                               
+    # Brak aplikacji Qt (błąd przed utworzeniem okna) – komunikat systemowy zamiast ciszy
+    if app is None:
+        _startup_excepthook(exctype, value, tb, already_logged=True)
+        return
+
+    # Warunki bezpieczeństwa: reentrancja lub wywołanie z wątku roboczego
+    if _in_handler or threading.current_thread() is not threading.main_thread():
+        return
 
     _in_handler = True
     try:
@@ -600,7 +684,7 @@ class PythonEditor(QsciScintilla):
 # GŁÓWNA KLASA APLIKACJI
 # ─────────────────────────────────────────────────────────────────────────────
 class MkPyEdekGUI(QMainWindow):
-    VERSION = "2.0.3.0"
+    VERSION = "2.0.8.0"
 
     def __init__(self, file_to_open=None):
         super().__init__()
@@ -613,6 +697,7 @@ class MkPyEdekGUI(QMainWindow):
 
         self.python_cmd = None
         self._manual_python_cmd = False
+        self._python_cmd_rejected = False
 
         self.load_config()
         self.init_ui()
@@ -635,10 +720,35 @@ class MkPyEdekGUI(QMainWindow):
             return False
         return r.returncode == 0 and (r.stdout + r.stderr).strip().startswith("Python")
 
+    @staticmethod
+    def _which_in_path(name):
+        """Bezpieczny odpowiednik shutil.which: szuka WYŁĄCZNIE w katalogach ze zmiennej PATH.
+
+        shutil.which w Windows przeszukuje najpierw bieżący katalog – gdyby edytor został
+        uruchomiony z folderu ucznia (np. „Otwórz za pomocą”), podrzucony tam python.exe
+        zostałby wybrany jako interpreter. Pomijane są więc: bieżący katalog, wpisy względne
+        (np. „.”, które też wskazują bieżący katalog) oraz puste wpisy PATH."""
+        cwd = os.path.normcase(os.path.abspath(os.getcwd()))
+        is_windows = platform.system() == "Windows"
+        exts = [""]
+        if is_windows and not os.path.splitext(name)[1]:
+            exts = [e for e in os.environ.get("PATHEXT", ".COM;.EXE;.BAT;.CMD").split(";") if e]
+        for folder in os.environ.get("PATH", "").split(os.pathsep):
+            folder = folder.strip().strip('"')
+            if not folder or not os.path.isabs(folder):
+                continue
+            if os.path.normcase(os.path.abspath(folder)) == cwd:
+                continue
+            for ext in exts:
+                candidate = os.path.join(folder, name + ext)
+                if os.path.isfile(candidate) and (is_windows or os.access(candidate, os.X_OK)):
+                    return candidate
+        return None
+
     def _detect_python(self):
         names = ["py", "python", "python3"] if platform.system() == "Windows" else ["python3", "python"]
         for name in names:
-            path = shutil.which(name)
+            path = self._which_in_path(name)
             if path and self._is_valid_python(path):
                 return path
         return None
@@ -728,6 +838,7 @@ class MkPyEdekGUI(QMainWindow):
                     # Błędny wpis (np. zła ścieżka) – porzuć go i wróć do autodetekcji
                     logging.warning(f"Pominięto nieprawidłowy interpreter z konfiguracji: {stored_cmd!r}")
                     invalid_stored_cmd = True
+                    self._python_cmd_rejected = True   # nie przywracaj go przy zapisie
 
         if not self.python_cmd:
             self.python_cmd = self._detect_python()
@@ -736,7 +847,35 @@ class MkPyEdekGUI(QMainWindow):
             # Zapisz poprawną konfigurację (z odzyskanymi ustawieniami) w miejsce błędnej
             self.save_config()
 
-    def save_config(self):
+    # ── Współpraca kilku otwartych okien edytora ────────────────────────────────
+    # Każde okno trzyma ustawienia w pamięci, ale config.json jest wspólny. Lista ostatnich
+    # plików jest więc zawsze odświeżana z dysku przed zmianą (dysk = źródło prawdy), a przy
+    # zapisie zachowywany jest interpreter wskazany w innym oknie. Motyw i ostatni folder:
+    # obowiązuje ostatnia zmiana.
+
+    @staticmethod
+    def _read_config_quiet():
+        """Odczyt config.json bez naprawiania (dla synchronizacji okien). None, gdy się nie da."""
+        try:
+            with open(CONFIG_FILE, 'r', encoding='utf-8') as f:
+                data = json.load(f)
+            return data if isinstance(data, dict) else None
+        except (OSError, ValueError):
+            return None
+
+    def _reload_recent_from_disk(self):
+        data = self._read_config_quiet()
+        if data is None:
+            return
+        recent = data.get("recent_files")
+        if isinstance(recent, list):
+            self.recent_files = [p for p in recent if isinstance(p, str) and p][:10]
+
+    def save_config(self, recent_changed=False):
+        """recent_changed=True: to okno właśnie zmieniło listę ostatnich plików (po odświeżeniu z dysku)."""
+        if not recent_changed:
+            # Zmiana motywu/folderu/interpretera nie może nadpisać listy zmienionej w innym oknie
+            self._reload_recent_from_disk()
         try:
             config_data = {
                 "recent_files": self.recent_files,
@@ -745,19 +884,34 @@ class MkPyEdekGUI(QMainWindow):
             }
             if self._manual_python_cmd and self.python_cmd:
                 config_data["python_cmd"] = self.python_cmd
+            elif not self._python_cmd_rejected:
+                # Nie kasuj interpretera, który użytkownik wskazał w innym oknie
+                disk = self._read_config_quiet() or {}
+                if isinstance(disk.get("python_cmd"), str) and disk["python_cmd"]:
+                    config_data["python_cmd"] = disk["python_cmd"]
 
             atomic_write_text(CONFIG_FILE, json.dumps(config_data, ensure_ascii=False, indent=4))
         except Exception as e:
             logging.warning(f"Nie udało się zapisać konfiguracji: {e}")
 
+    def changeEvent(self, event):
+        # Po przejściu do tego okna pokaż pliki otwarte w międzyczasie w innym oknie edytora
+        if event.type() == QEvent.Type.ActivationChange and self.isActiveWindow():
+            before = list(self.recent_files)
+            self._reload_recent_from_disk()
+            if self.recent_files != before:
+                self.update_recent_menu()
+        super().changeEvent(event)
+
     def add_to_recent(self, file_path):
         file_path = os.path.abspath(file_path)
-        if file_path in self.recent_files:
-            self.recent_files.remove(file_path)
+        self._reload_recent_from_disk()      # uwzględnij pliki otwarte w innych oknach
+        key = os.path.normcase(file_path)    # Windows nie rozróżnia wielkości liter w ścieżkach
+        self.recent_files = [p for p in self.recent_files if os.path.normcase(p) != key]
         self.recent_files.insert(0, file_path)
         self.recent_files = self.recent_files[:10]
         self.last_dir = os.path.dirname(file_path)
-        self.save_config()
+        self.save_config(recent_changed=True)
         self.update_recent_menu()
 
     def init_ui(self):
@@ -775,6 +929,9 @@ class MkPyEdekGUI(QMainWindow):
         self.setCentralWidget(main_widget)
 
         self.statusBar().showMessage("Gotowy")
+        if USER_DIR_WARNING:
+            # Np. niedostępny profil mobilny – program działa, ale ustawienia trafiają gdzie indziej
+            QTimer.singleShot(0, lambda: QMessageBox.warning(self, "Folder ustawień", USER_DIR_WARNING))
         self.create_menu()
         self.change_theme(self.current_theme)
         self.update_title()
@@ -1006,12 +1163,24 @@ class MkPyEdekGUI(QMainWindow):
     # drugi raz w parametrze continue= strony wyboru konta. Dłuższe adresy bywają odrzucane.
     GMAIL_MAX_URL_LENGTH = 6000
 
-    @staticmethod
-    def _gmail_url(subject, body):
+    # Strona wyboru konta Google – ważne na wspólnych komputerach w pracowni (żeby uczeń nie
+    # oddał pracy z konta poprzedniej osoby). Adres NIE jest oficjalnie udokumentowany przez Google;
+    # gdyby przestał działać, wystarczy ustawić None – Gmail i Classroom otworzą się wtedy
+    # bezpośrednio, na koncie zalogowanym w przeglądarce.
+    GOOGLE_ACCOUNT_CHOOSER = "https://accounts.google.com/AccountChooser?continue={target}"
+    CLASSROOM_URL = "https://classroom.google.com/"
+
+    @classmethod
+    def _with_account_chooser(cls, url):
+        if not cls.GOOGLE_ACCOUNT_CHOOSER:
+            return url
+        return cls.GOOGLE_ACCOUNT_CHOOSER.format(target=urllib.parse.quote(url, safe=''))
+
+    @classmethod
+    def _gmail_url(cls, subject, body):
         gmail_url = (f"https://mail.google.com/mail/?view=cm"
                      f"&su={urllib.parse.quote(subject)}&body={urllib.parse.quote(body)}")
-        # Strona wyboru konta Google – ważne na wspólnych komputerach w pracowni
-        return f"https://accounts.google.com/AccountChooser?continue={urllib.parse.quote(gmail_url, safe='')}"
+        return cls._with_account_chooser(gmail_url)
 
     def send_via_gmail(self):
         code = self.editor.text()
@@ -1068,7 +1237,7 @@ class MkPyEdekGUI(QMainWindow):
         # Bez udanego zapisu nie otwieramy Classroom (plik na dysku byłby nieaktualny).
         if not self.save_file():
             return
-        webbrowser.open("https://classroom.google.com")
+        webbrowser.open(self._with_account_chooser(self.CLASSROOM_URL))
         self._reveal_in_file_manager(self.current_file)
 
     def change_theme(self, theme_name):
@@ -1251,9 +1420,11 @@ class MkPyEdekGUI(QMainWindow):
         else:
             info = (f"Nie znaleziono pliku:\n{file_path}\n\n"
                     "Plik mógł zostać przeniesiony, usunięty lub mieć zmienioną nazwę.")
-            if file_path in self.recent_files:
-                self.recent_files.remove(file_path)
-                self.save_config()
+            self._reload_recent_from_disk()
+            key = os.path.normcase(file_path)
+            if any(os.path.normcase(p) == key for p in self.recent_files):
+                self.recent_files = [p for p in self.recent_files if os.path.normcase(p) != key]
+                self.save_config(recent_changed=True)
                 self.update_recent_menu()
                 info += "\n\nPlik został usunięty z listy ostatnio otwieranych."
             logging.warning(f"Nie znaleziono pliku do otwarcia: {file_path}")

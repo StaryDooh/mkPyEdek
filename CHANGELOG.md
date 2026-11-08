@@ -2,6 +2,44 @@
 
 ---
 
+## [2.0.8.0]
+
+### Naprawione (Fixed)
+- **Kilka okien edytora jednocześnie:** Lista ostatnio otwieranych plików jest wspólna dla wszystkich okien – pliki otwarte w jednym oknie nie znikają po zamknięciu lub zmianie ustawień w drugim, a menu „Otwórz ostatnie” odświeża się po przejściu do okna. Interpreter wskazany w jednym oknie nie jest kasowany przez zapis ustawień z innego.
+- **Duplikaty na liście ostatnich plików:** Ścieżki są porównywane bez rozróżniania wielkości liter, jak w Windows.
+
+---
+
+## [2.0.7.0]
+
+### Naprawione (Fixed)
+- **Widoczne błędy uruchamiania:** Błąd przed otwarciem okna programu (np. uszkodzona instalacja, brak biblioteki) wyświetla systemowe okno komunikatu i jest zapisywany w `app.log`. Wcześniej w wersji .exe program kończył działanie bez żadnej informacji.
+- **Niedostępny folder profilu:** Gdy nie można zapisywać w `%USERPROFILE%\.mkPyEdek` (np. profil mobilny, brak uprawnień), ustawienia i dziennik są zapisywane w `%LOCALAPPDATA%\mkPyEdek` lub w folderze tymczasowym, a program informuje o tym po uruchomieniu. Problem z plikiem dziennika nie blokuje już startu programu.
+
+---
+
+## [2.0.6.0]
+
+### Zmienione (Changed)
+- **Wybór konta Google przy Classroom:** „Udostępnij w Classroom” otwiera najpierw stronę wyboru konta Google (jak „Wyślij kod przez Gmail”), aby na wspólnych komputerach uczeń nie oddał pracy z konta poprzedniej osoby.
+- Adres strony wyboru konta znajduje się w jednej stałej (`GOOGLE_ACCOUNT_CHOOSER`); jej wyłączenie powoduje otwieranie Gmaila i Classroom bezpośrednio.
+
+---
+
+## [2.0.5.0]
+
+### Naprawione (Fixed)
+- **Rozmiar dziennika błędów:** Plik `app.log` jest rotowany po przekroczeniu 1 MB (zachowywane są dwie poprzednie części: `app.log.1`, `app.log.2`), więc dziennik zajmuje łącznie najwyżej ok. 3 MB. Wcześniej rósł bez ograniczeń. Plik dziennika jest tworzony dopiero przy pierwszym wpisie.
+
+---
+
+## [2.0.4.0]
+
+### Bezpieczeństwo (Security)
+- **Wyszukiwanie interpretera Pythona:** Autodetekcja szuka interpretera wyłącznie w katalogach ze zmiennej `PATH`, z pominięciem bieżącego katalogu, wpisów względnych (`.`) i pustych. Wcześniej (przez `shutil.which`) plik `python.exe` podrzucony do folderu, z którego uruchomiono edytor (np. przez „Otwórz za pomocą”), mógł zostać użyty jako interpreter.
+
+---
+
 ## [2.0.3.0]
 
 ### Naprawione (Fixed)

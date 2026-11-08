@@ -1,10 +1,22 @@
-#define MyAppVersion "2.0.3.0"
+; Wersja pobierana automatycznie z zasobu wersji pliku .exe (nadanego przez wersja.txt
+; podczas budowania PyInstallerem) – nie trzeba jej już wpisywać ręcznie.
+#define MyAppExe "dist\mkPyEdek\mkPyEdek.exe"
+#if !FileExists(AddBackslash(SourcePath) + MyAppExe)
+  #error Nie znaleziono dist\mkPyEdek\mkPyEdek.exe – najpierw uruchom Budowanie_EXE_mkPyEdek.bat
+#endif
+#define MyAppVersion GetVersionNumbersString(AddBackslash(SourcePath) + MyAppExe)
+#if MyAppVersion == ""
+  #error Plik mkPyEdek.exe nie zawiera informacji o wersji – sprawdź wersja.txt
+#endif
 
 [Setup]
 ; Unikalny identyfikator aplikacji
 AppId={{61000D35-DDAF-4F06-8104-0777F0173727}
 AppName=mkPyEdek
 AppVersion={#MyAppVersion}
+; Ta sama wersja we właściwościach pliku instalatora i w „Aplikacje i funkcje”
+VersionInfoVersion={#MyAppVersion}
+AppVerName=mkPyEdek {#MyAppVersion}
 AppPublisher=Krzysztof Markowski
 
 ; Domyślny folder instalacji
@@ -33,9 +45,9 @@ Name: "polish"; MessagesFile: "compiler:Languages\Polish.isl"
 [Tasks]
 Name: "desktopicon"; Description: "{cm:CreateDesktopIcon}"; GroupDescription: "{cm:AdditionalIcons}"; Flags: checkablealone
 
-; --- Czyszczenie nieprawidłowego pliku konfiguracyjnego ze starszych wersji ---
-[InstallDelete]
-Type: files; Name: "{%USERPROFILE}\.mkPyEdek\config.json"
+; --- Usunięto [InstallDelete] dla config.json (od wersji 2.0.x) ---
+; Program sam wykrywa i naprawia błędną konfigurację (zła ścieżka interpretera, uszkodzony plik),
+; a usuwanie config.json przy każdej aktualizacji kasowało uczniom listę ostatnich plików i motyw.
 
 [Files]
 ; 1. Główny plik wykonywalny
